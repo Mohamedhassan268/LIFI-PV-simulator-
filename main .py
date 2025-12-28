@@ -1,28 +1,4 @@
 # main.py - 7-LAYER ARCHITECTURE WITH TIA (FULLY INTEGRATED)
-
-"""
-Complete Li-Fi + PV System Simulator with Transimpedance Amplifier (TIA)
-Matches: approach_2_complete_implementation_plan.pdf
-
-Layer 1: TRANSMITTER (OOK Modulation)
-Layer 2: CHANNEL (Lambertian + Noise)
-Layer 3: RECEIVER (PV Cell + TIA for dual-path)
-Layer 4: POST-PROCESSING (Data path via TIA + Energy path via PV ODE)
-Layer 5: BIT RECOVERY (Sampling + Decision)
-Layer 6: METRICS (BER + SNR + Harvested Energy)
-Layer 7: OUTPUT (CSV Export + Logging)
-
-DUAL-PATH ARCHITECTURE:
-  - V_pv (from PV ODE): Used for ENERGY HARVESTING (slow DC)
-  - V_tia (from TIA): Used for DATA COMMUNICATION (fast AC)
-
-KEY IMPROVEMENTS WITH TIA:
-✅ Bandwidth: 1.6 kHz → 3+ MHz (2000× increase!)
-✅ Signal swing: 2.5 mV → 50+ mV (20× larger)
-✅ SNR: -20 dB → +20+ dB (positive SNR)
-✅ BER: 39.4% → < 1% (excellent performance)
-"""
-
 import numpy as np
 import pandas as pd
 from datetime import datetime
