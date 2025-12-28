@@ -1,0 +1,2 @@
+distance_m,data_rate_kbps,dc_bias_ma,modulation_depth,capacitance_pf,r_tia_kohm,f_3db_tia_mhz,ber,errors,snr_db,q_factor,eye_opening_percent,harvested_power_avg_uw,harvested_energy_pj,received_power_avg_uw,photocurrent_avg_ua,v_pv_rms_mv,v_tia_rms_mv,v_data_rms_mv,timestamp,n_bits,samples_per_bit
+1.0,1000.0,200,0.9,100,50.0,3.0,0.0,0,-7.09111202595629,3.2725108462203027,99.99999999601405,0.14422120989895493,144.22090973807036,2.140544524210271,0.8990287001683136,13.857875801531183,13.44452737593637,12.245434887068956,2025-12-28T22:11:32.648116,1000,500

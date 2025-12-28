@@ -1,0 +1,2 @@
+distance_m,led_power_mw,data_rate_kbps,dc_bias_ma,modulation_depth,capacitance_pf,temperature_k,ber,errors,snr_db,q_factor,eye_opening_percent,harvested_power_avg_uw,harvested_energy_pj,received_power_avg_uw,photocurrent_avg_ua,v_pv_rms_mv,v_data_rms_mv,v_dc_avg_mv,timestamp,n_bits,samples_per_bit
+1.0,22.9696,1000.0,200,0.9,100,300,0.394,394,-20.27946865372353,0.2487348495368529,99.99999984207558,0.00018523403327754377,0.18523377518727005,2.1272087214151076,0.8934276629943452,14.476076198944348,1.4017694205925195,0.2073297672403831,2025-12-28T19:11:46.251465,1000,500
