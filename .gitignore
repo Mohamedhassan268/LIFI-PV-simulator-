@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+
+# Simulator Outputs (Optional: Comment out to commit plots)
+outputs/

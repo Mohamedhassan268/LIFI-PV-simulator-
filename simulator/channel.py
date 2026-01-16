@@ -74,26 +74,114 @@ class OpticalChannel:
         print(f"    Lambertian order (m_L): {self.m_L:.2f}")
         print(f"    RX area: {self.rx_area_cm2} cm^2")
     
-    def propagate(self, P_tx, t, verbose=False):
+    def compute_h_matrix(self, tx_pos_list, rx_pos_list, tx_normal_list=None, rx_normal_list=[[0,0,1]]):
         """
-        Propagate optical signal through Lambertian channel.
-        
-        Equation 2: Lambertian Path Loss
-          P_rx = [(m_L+1) * A_rx / (2pi * r^2)] * P_tx * cos^m_L(phi_tx) * cos(psi_rx)
-        
-        Simplified on-axis (phi_tx=0, psi_rx=0):
-          P_rx = [(m_L+1) * A_rx / (2pi * r^2)] * P_tx
+        Compute the H (LxM) Channel Gain Matrix for MIMO.
         
         Args:
-            P_tx (array): Transmitted optical power (Watts)
+            tx_pos_list: List of [x,y,z] for each Transmitter (M)
+            rx_pos_list: List of [x,y,z] for each Receiver (L)
+            tx_normal_list: List of normals [nx,ny,nz], default all pointing down [0,0,-1]
+            rx_normal_list: List of normals [nx,ny,nz], default all pointing up [0,0,1]
+            
+        Returns:
+            H (ndarray): LxM matrix where H[i,j] is gain from Tx[j] to Rx[i]
+        """
+        M = len(tx_pos_list) # Num Transmitters
+        L = len(rx_pos_list) # Num Receivers
+        
+        if tx_normal_list is None:
+            tx_normal_list = [[0, 0, -1]] * M # Down
+            
+        if rx_normal_list is None or len(rx_normal_list) != L:
+            rx_normal_list = [[0, 0, 1]] * L # Up
+            
+        H = np.zeros((L, M))
+        
+        for i in range(L): # For each Receiver
+            rx_pos = np.array(rx_pos_list[i])
+            rx_norm = np.array(rx_normal_list[i])
+            
+            for j in range(M): # For each Transmitter
+                tx_pos = np.array(tx_pos_list[j])
+                tx_norm = np.array(tx_normal_list[j])
+                
+                # Vector from Tx to Rx
+                vec_d = rx_pos - tx_pos
+                dist = np.linalg.norm(vec_d)
+                
+                if dist == 0:
+                    H[i,j] = 0
+                    continue
+                    
+                # Cosine of angle at Tx (Irradiance angle)
+                # phi = angle between normal and vector to Rx
+                cos_phi = np.dot(tx_norm, vec_d / dist)
+                
+                # Cosine of angle at Rx (Incidence angle)
+                # psi = angle between normal and vector from Tx (which is -vec_d)
+                cos_psi = np.dot(rx_norm, -vec_d / dist)
+                
+                # Check Field of View
+                # Assuming typical 90 deg FOV for simplicity: cos_psi > 0
+                if cos_phi > 0 and cos_psi > 0:
+                    # Lambertian calc
+                    # Gain = [(m+1)A / 2pi d^2] * cos^m(phi) * cos(psi)
+                    gain = ((self.m_L + 1) * self.rx_area_m2) / (2 * np.pi * dist**2)
+                    gain *= (cos_phi ** self.m_L)
+                    gain *= cos_psi
+                    H[i,j] = gain
+                else:
+                    H[i,j] = 0.0
+                    
+        return H
+
+    def propagate(self, P_tx, t, H_matrix=None, verbose=False):
+        """
+        Propagate optical signal through Lambertian channel.
+        Supports SISO (scalar) and MIMO (matrix) modes.
+        
+        Args:
+            P_tx (array): 
+                - If SISO: 1D array of power (Watts)
+                - If MIMO: array shape (M_tx, N_samples)
             t (array): Time vector (seconds)
+            H_matrix (ndarray, optional): Precomputed LxM gain matrix.
+                If None, uses simple SISO distance model.
             verbose (bool): Print debug info
         
         Returns:
-            P_rx (array): Received optical power (Watts)
+            P_rx (array):
+                - If SISO: 1D array (Watts)
+                - If MIMO: array shape (L_rx, N_samples)
         """
         
-        # ========== COMPUTE PATH LOSS GAIN ==========
+        # MIMO MODE
+        if H_matrix is not None:
+            # P_tx shape: (M, N) or (N,)
+            # If 1D, assume 1 Tx but broadcast via matrix? No, must match dimension.
+            
+            # Ensure P_tx is (M, N)
+            if P_tx.ndim == 1:
+                P_tx = P_tx.reshape(1, -1)
+                
+            M_tx = H_matrix.shape[1]
+            if P_tx.shape[0] != M_tx:
+                raise ValueError(f"MIMO Mismatch: H expects {M_tx} Tx, got {P_tx.shape[0]}")
+                
+            # Matrix Multiply: P_rx = H * P_tx
+            # (L, M) * (M, N) -> (L, N)
+            P_rx = np.dot(H_matrix, P_tx)
+            
+            if verbose:
+                print(f"\nMIMO Propagation:")
+                print(f"  H shape: {H_matrix.shape}")
+                print(f"  Input power shape: {P_tx.shape}")
+                print(f"  Output power shape: {P_rx.shape}")
+                
+            return P_rx
+
+        # SISO MODE (Default)
         # On-axis: cos^m_L(0) = 1, cos(0) = 1
         gain_linear = ((self.m_L + 1) * self.rx_area_m2) / (2 * np.pi * self.distance**2)
         
@@ -101,10 +189,11 @@ class OpticalChannel:
         P_rx = gain_linear * P_tx
         
         if verbose:
-            print(f"\nChannel Propagation:")
+            print(f"\nChannel Propagation (SISO):")
             print(f"  Path loss gain: {gain_linear:.3e}")
-            print(f"  P_tx range: {P_tx.min()*1e3:.3f} - {P_tx.max()*1e3:.3f} mW")
-            print(f"  P_rx range: {P_rx.min()*1e6:.3f} - {P_rx.max()*1e6:.3f} uW")
+            if hasattr(P_tx, 'min'):
+                 print(f"  P_tx range: {P_tx.min()*1e3:.3f} - {P_tx.max()*1e3:.3f} mW")
+                 print(f"  P_rx range: {P_rx.min()*1e6:.3f} - {P_rx.max()*1e6:.3f} uW")
         
         return P_rx
     
@@ -140,9 +229,10 @@ class OpticalChannel:
         # ========== TOTAL NOISE STD ==========
         sigma_noise = np.sqrt(S_shot + S_thermal)
         
-        # Generate AWGN
-        noise = np.zeros(len(P_rx))  # DISABLED for testing
-        noise = np.random.normal(0, sigma_noise * 0.001, len(P_rx))  # Re-enabled, reduced
+        # Generate AWGN with physical noise level
+        # Use full physical noise (removed 0.001 artificial reduction)
+        noise = np.random.normal(0, sigma_noise, len(P_rx))
+        
         if verbose:
             print(f"\nNoise Model:")
             print(f"  S_shot: {S_shot:.3e} W")

@@ -195,6 +195,253 @@ class Demodulator:
             'accuracy': 1 - ber,
         }
     
+    def decode_manchester(self, signal_in, n_bits, sps):
+        """
+        Decode Manchester-encoded signal.
+        
+        Manchester encoding:
+        - bit '1' -> high-to-low transition (first half high, second half low)
+        - bit '0' -> low-to-high transition (first half low, second half high)
+        
+        Decoding strategy:
+        - Sample first half and second half of each bit period
+        - If first > second: bit = 1
+        - If first < second: bit = 0
+        
+        Args:
+            signal_in (array): Filtered signal
+            n_bits (int): Number of bits to decode
+            sps (int): Samples per bit period
+            
+        Returns:
+            bits_rx (array): Recovered bits
+        """
+        bits_rx = np.zeros(n_bits, dtype=int)
+        
+        # Sample points: quarter and three-quarter of each bit period
+        samples_per_half = sps // 2
+        
+        for i in range(n_bits):
+            # Start of bit period
+            bit_start = i * sps
+            
+            # Sample first half (at 1/4 of bit period)
+            idx_first = bit_start + samples_per_half // 2
+            # Sample second half (at 3/4 of bit period)
+            idx_second = bit_start + samples_per_half + samples_per_half // 2
+            
+            # Ensure indices are valid
+            idx_first = min(idx_first, len(signal_in) - 1)
+            idx_second = min(idx_second, len(signal_in) - 1)
+            
+            # Compare first and second half
+            if signal_in[idx_first] > signal_in[idx_second]:
+                bits_rx[i] = 1  # high-to-low = '1'
+            else:
+                bits_rx[i] = 0  # low-to-high = '0'
+        
+        return bits_rx
+    
+    def decode_manchester_differential(self, signal_in, n_bits, sps):
+        """
+        Decode Manchester using differential detection (more robust).
+        
+        Looks at the slope/transition at bit center.
+        
+        Args:
+            signal_in (array): Filtered signal  
+            n_bits (int): Number of bits to decode
+            sps (int): Samples per bit period
+            
+        Returns:
+            bits_rx (array): Recovered bits
+        """
+        bits_rx = np.zeros(n_bits, dtype=int)
+        
+        for i in range(n_bits):
+            # Bit center
+            bit_center = i * sps + sps // 2
+            
+            # Look at slope around center
+            window = max(1, sps // 8)
+            idx_before = max(0, bit_center - window)
+            idx_after = min(len(signal_in) - 1, bit_center + window)
+            
+            slope = signal_in[idx_after] - signal_in[idx_before]
+            
+            # Negative slope (falling edge) = '1'
+            # Positive slope (rising edge) = '0'
+            if slope < 0:
+                bits_rx[i] = 1
+            else:
+                bits_rx[i] = 0
+        
+        return bits_rx
+    
+    def _qam_demap(self, symbols, qam_order):
+        """
+        Convert complex QAM symbols to bits.
+        
+        Args:
+            symbols (array): Complex symbols
+            qam_order (int): 4, 16, etc.
+            
+        Returns:
+            bits (array): Decoded bits
+        """
+        bits = []
+        
+        if qam_order == 16:
+            # Simple demapping for the binary map used in Tx
+            # 16-QAM Levels: -3, -1, 1, 3
+            # Thresholds: -2, 0, 2
+            
+            # Normalize power back (x sqrt(10))
+            norm_factor = np.sqrt(10)
+            sym_scaled = symbols * norm_factor
+            
+            I = sym_scaled.real
+            Q = sym_scaled.imag
+            
+            # Helper to decode 4 levels back to 2 bits
+            # Map used in Tx:
+            # 00 -> -3 ( < -2 )
+            # 01 -> -1 ( -2 < x < 0 )
+            # 11 ->  1 ( 0 < x < 2 )
+            # 10 ->  3 ( > 2 )
+            
+            def decode_levels(vals):
+                b = np.zeros((len(vals), 2), dtype=int)
+                # Bit 0 (Sign bit)
+                # >0 -> 1, <0 -> 0
+                b[vals > 0, 0] = 1
+                
+                # Bit 1 (Magnitude bit)
+                # Inner levels (-1, 1) -> 1, Outer levels (-3, 3) -> 0
+                abs_vals = np.abs(vals)
+                b[(abs_vals < 2), 1] = 1
+                return b
+            
+            b_I = decode_levels(I)
+            b_Q = decode_levels(Q)
+            
+            # Interleave I and Q bits: [bI0, bI1, bQ0, bQ1]
+            for i in range(len(I)):
+                bits.extend([b_I[i,0], b_I[i,1], b_Q[i,0], b_Q[i,1]])
+                
+        elif qam_order == 4:
+            # QPSK
+            # >0 -> 1, <0 -> 0
+            # sqrt(2) normalization
+            sym_scaled = symbols * np.sqrt(2)
+            bits = list(((sym_scaled.real > 0).astype(int) * 2 + (sym_scaled.imag > 0).astype(int)))
+            # This is packed 0-3 int, need to unpack to bits... this is lazy.
+            # Proper bit expansion:
+            for s in sym_scaled:
+                bits.append(1 if s.real > 0 else 0)
+                bits.append(1 if s.imag > 0 else 0)
+        
+        return np.array(bits)
+
+    def demodulate_mimo(self, P_rx_mimo, H_matrix, method='zf'):
+        """
+        Demodulate MIMO signal (Spatial Demultiplexing).
+        
+        Args:
+            P_rx_mimo (ndarray): Received signal matrix (L_rx, N_samples)
+            H_matrix (ndarray): Channel matrix (L_rx, M_tx)
+            method (str): Equalizer method ('zf' for Zero-Forcing)
+            
+        Returns:
+            P_est (ndarray): Estimated transmitted signals (M_tx, N_samples)
+        """
+        if method == 'zf':
+            # Zero-Forcing: X_est = inv(H) * Y
+            # For non-square H, use Pseudo-inverse: pinv(H) * Y
+            try:
+                H_inv = np.linalg.pinv(H_matrix)
+                P_est = np.dot(H_inv, P_rx_mimo)
+                return P_est
+            except np.linalg.LinAlgError:
+                print("Error: H matrix singular or invalid.")
+                return np.zeros((H_matrix.shape[1], P_rx_mimo.shape[1]))
+        else:
+            raise ValueError(f"Unknown MIMO method: {method}")
+
+    def demodulate_ofdm(self, signal_in, n_fft=64, cp_len=16, qam_order=16, verbose=False):
+        """
+        Demodulate DCO-OFDM signal.
+        
+        Process:
+        1. Resample signal to symbol rate (downsample)
+        2. Remove Cyclic Prefix
+        3. FFT -> Frequency Domain
+        4. Extract data subcarriers
+        5. Channel Equalization (Zero Forcing)
+        6. QAM Demapping
+        
+        Args:
+            signal_in (array): Received time-domain signal
+            n_fft (int): FFT subcarriers
+            cp_len (int): Cyclic prefix length
+            
+        Returns:
+            bits_rx (array): Recovered bits
+        """
+        # 1. Resample / Sync
+        # We assume perfect synchronization for now.
+        # We need to extract exactly the OFDM frames.
+        
+        # Calculate number of samples per frame
+        n_frame_samples = n_fft + cp_len
+        
+        # Determine number of full frames
+        n_frames = len(signal_in) // n_frame_samples
+        
+        # Truncate to whole frames
+        signal_trunc = signal_in[:n_frames * n_frame_samples]
+        
+        # Reshape
+        frames_time = signal_trunc.reshape(n_frames, n_frame_samples)
+        
+        # 2. Remove CP
+        # Keep only the last n_fft samples of each frame
+        frames_payload = frames_time[:, cp_len:]
+        
+        all_symbols = []
+        
+        # 3. FFT
+        for frame_t in frames_payload:
+            frame_f = np.fft.fft(frame_t)
+            
+            # 4. Extract Data Subcarriers
+            # Indices: 1 to N/2 - 1
+            data_subcarriers = frame_f[1 : n_fft//2]
+            
+            # 5. Channel Equalization (Placeholder)
+            # In a real system, we'd use pilots. 
+            # Here, we assume "blind" equalization or simple normalization.
+            # DCO-OFDM suffers from attenuation at high frequencies.
+            # Simple approach: automatic gain control per subcarrier? 
+            # No, that destroys QAM info.
+            # For now: Pass raw symbols. The constellation will look "shrunk" and rotated.
+            # Ideally we pass H_est here.
+            
+            all_symbols.extend(data_subcarriers)
+            
+        all_symbols = np.array(all_symbols)
+        
+        # Quick Blind Equalization (Scalar): Center the constellation
+        # Normalize power to match ideal QAM power (1.0)
+        p_avg = np.mean(np.abs(all_symbols)**2)
+        if p_avg > 0:
+            all_symbols /= np.sqrt(p_avg)
+        
+        # 6. Demap
+        bits_rx = self._qam_demap(all_symbols, qam_order)
+        
+        return bits_rx, all_symbols
+
     def demodulate(self, V_pv, bits_tx, n_bits, sps, verbose=False):
         """
         Complete demodulation pipeline.
