@@ -1,0 +1,250 @@
+# Li-Fi + PV Simulator - Command Reference
+# Auto-generated command list for easy reference
+# Last updated: 2026-01-16
+
+================================================================================
+LAYER 1: TRANSMITTER ARGUMENTS
+================================================================================
+
+--tx-dc-bias <value>
+    LED DC bias current (mA)
+    Range: [10-500]
+    Default: 200
+    Example: --tx-dc-bias 150
+
+--tx-mod-depth <value>
+    Modulation depth
+    Range: [0.1-1.0]
+    Default: 0.9
+    Example: --tx-mod-depth 0.7
+
+--tx-efficiency <value>
+    LED wall-plug efficiency (W/A)
+    Range: [0.01-0.5]
+    Default: 0.08
+    Example: --tx-efficiency 0.1
+
+================================================================================
+LAYER 2: CHANNEL ARGUMENTS
+================================================================================
+
+--ch-distance <value>
+    TX-RX distance (meters)
+    Range: [0.1-10]
+    Default: 1.0
+    Example: --ch-distance 2.5
+
+--ch-beam-angle <value>
+    LED half-power beam angle (degrees)
+    Range: [5-60]
+    Default: 30
+    Example: --ch-beam-angle 45
+
+--ch-rx-area <value>
+    Receiver active area (cm²)
+    Range: [0.1-100]
+    Default: 1.0
+    Example: --ch-rx-area 9.0
+
+================================================================================
+LAYER 3: RECEIVER (PV CELL) ARGUMENTS
+================================================================================
+
+--rx-cell <preset>
+    PV cell preset selection
+    Choices: gaas, poly-si, c-si, high-speed, custom
+    Default: gaas
+    Example: --rx-cell poly-si
+
+    Available Presets:
+    - gaas: High efficiency GaAs (Kadirvelu baseline)
+             R=0.457 A/W, C=798pF, Rsh=138.8kΩ
+    - poly-si: Low-cost Poly-Si for IoT
+             R=0.5 A/W, C=500pF, Rsh=10kΩ
+    - c-si: Standard crystalline silicon
+             R=0.42 A/W, C=300pF, Rsh=100kΩ
+    - high-speed: Low capacitance for OFDM (Sarwar 15 Mbps)
+             R=0.6 A/W, C=100pF, Rsh=1MΩ
+    - custom: User-defined parameters
+
+--rx-responsivity <value>
+    Responsivity (A/W) - overrides preset
+    Range: [0.1-1.0]
+    Default: From preset
+    Example: --rx-responsivity 0.55
+
+--rx-capacitance <value>
+    Junction capacitance (pF) - overrides preset
+    Range: [10-5000]
+    Default: From preset
+    Example: --rx-capacitance 400
+
+--rx-shunt-r <value>
+    Shunt resistance (MΩ) - overrides preset
+    Range: [0.01-10]
+    Default: From preset
+    Example: --rx-shunt-r 0.5
+
+================================================================================
+LAYER 3B: TIA (TRANSIMPEDANCE AMPLIFIER) ARGUMENTS
+================================================================================
+
+--no-tia
+    Disable TIA, use direct PV output (energy-first mode)
+    Flag: No value needed
+    Default: False (TIA enabled)
+    Example: --no-tia
+
+--tia-r <value>
+    Transimpedance (Ω)
+    Range: [1e3-1e6]
+    Default: 50000
+    Example: --tia-r 100000
+
+--tia-bw <value>
+    3dB bandwidth (Hz)
+    Range: [100e3-50e6]
+    Default: 3000000
+    Example: --tia-bw 5000000
+
+================================================================================
+SIMULATION CONTROL ARGUMENTS
+================================================================================
+
+--sim-rate <value>
+    Data rate (bps)
+    Range: [100-50e6]
+    Default: 1000000
+    Example: --sim-rate 500000
+
+--sim-bits <value>
+    Number of bits to simulate
+    Range: [100-1000000]
+    Default: 1000
+    Example: --sim-bits 5000
+
+--sim-sps <value>
+    Samples per bit
+    Range: [10-2000]
+    Default: 500
+    Example: --sim-sps 200
+
+================================================================================
+OUTPUT CONTROL ARGUMENTS
+================================================================================
+
+--out-dir <path>
+    Output directory
+    Default: outputs/
+    Example: --out-dir results/test1/
+
+--out-no-csv
+    Disable CSV export
+    Flag: No value needed
+    Default: False (CSV enabled)
+    Example: --out-no-csv
+
+--out-no-plots
+    Disable plot generation
+    Flag: No value needed
+    Default: False (plots enabled)
+    Example: --out-no-plots
+
+--out-downsample <value>
+    Save every Nth sample to CSV
+    Range: [1-∞]
+    Default: 1
+    Example: --out-downsample 10
+
+================================================================================
+PAPER VALIDATION MODES (LEGACY)
+================================================================================
+
+--figures <value>, -f <value>
+    Generate paper figures
+    Values: "all" or comma-separated numbers (e.g., "13,15,18")
+    Example: --figures all
+    Example: --figures 15,18
+
+--validate, -v
+    Run paper validation mode
+    Flag: No value needed
+    Example: --validate
+
+--sensitivity, -s
+    Run sensitivity analysis
+    Flag: No value needed
+    Example: --sensitivity
+
+--all, -a
+    Run everything (figures + validation + sensitivity)
+    Flag: No value needed
+    Example: --all
+
+--quiet, -q
+    Suppress verbose output
+    Flag: No value needed
+    Example: --quiet
+
+================================================================================
+COMPLETE USAGE EXAMPLES
+================================================================================
+
+# 1. Default simulation
+python main.py
+
+# 2. IoT scenario with Poly-Si cell at 0.5m distance
+python main.py --rx-cell poly-si --sim-rate 10000 --ch-distance 0.5
+
+# 3. High-speed OFDM with custom TIA
+python main.py --rx-cell high-speed --tia-r 100000 --sim-rate 15000000
+
+# 4. Energy-first mode without TIA (low bandwidth)
+python main.py --no-tia --sim-rate 10000 --sim-bits 500
+
+# 5. Custom cell parameters with specific modulation
+python main.py --rx-cell custom --rx-responsivity 0.45 --rx-capacitance 600 --tx-mod-depth 0.7
+
+# 6. Quick test with minimal output
+python main.py --sim-bits 100 --out-no-plots --out-no-csv --quiet
+
+# 7. Long simulation with downsampled CSV
+python main.py --sim-bits 100000 --out-downsample 10
+
+# 8. Custom transmitter and channel configuration
+python main.py --tx-dc-bias 150 --tx-mod-depth 0.8 --ch-distance 3.0 --ch-beam-angle 20
+
+# 9. Paper validation modes
+python main.py --validate
+python main.py --figures all
+python main.py --sensitivity
+
+# 10. Combined configuration
+python main.py \
+    --tx-dc-bias 180 --tx-mod-depth 0.75 \
+    --ch-distance 2.0 --ch-beam-angle 45 \
+    --rx-cell poly-si \
+    --tia-r 80000 \
+    --sim-rate 250000 --sim-bits 2000 \
+    --out-dir results/custom_run/
+
+================================================================================
+PARAMETER VALIDATION
+================================================================================
+
+All parameters are automatically validated and clamped to safe ranges.
+If a parameter is out of range, you'll see a warning like:
+
+⚠️  WARNING: TX Modulation Depth=1.5 out of range [0.1, 1.0]
+   Clamping to 1.0
+
+This prevents fatal mistakes while still allowing the simulation to run.
+
+================================================================================
+HELP COMMAND
+================================================================================
+
+For detailed help with all arguments:
+python main.py --help
+
+================================================================================

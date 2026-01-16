@@ -816,34 +816,144 @@ def run_single_paper_validation(data_rate_bps=2500, mod_depth=0.5, fsw_khz=100,
 if __name__ == "__main__":
     import argparse
     
+    # ========== PV CELL PRESETS ==========
+    CELL_PRESETS = {
+        'gaas': {
+            'responsivity': 0.457,
+            'capacitance': 798,
+            'shunt_resistance': 0.1388,
+            'description': 'High efficiency GaAs (Kadirvelu baseline)'
+        },
+        'poly-si': {
+            'responsivity': 0.5,
+            'capacitance': 500,
+            'shunt_resistance': 0.01,
+            'description': 'Low-cost Poly-Si for IoT'
+        },
+        'c-si': {
+            'responsivity': 0.42,
+            'capacitance': 300,
+            'shunt_resistance': 0.1,
+            'description': 'Standard crystalline silicon'
+        },
+        'high-speed': {
+            'responsivity': 0.6,
+            'capacitance': 100,
+            'shunt_resistance': 1.0,
+            'description': 'Low capacitance for OFDM (Sarwar 15 Mbps)'
+        },
+        'custom': {
+            'description': 'User-defined parameters'
+        }
+    }
+    
+    # ========== VALIDATION FUNCTION ==========
+    def validate_and_clamp(value, min_val, max_val, name):
+        """Validate and clamp parameter to safe thresholds."""
+        if value < min_val or value > max_val:
+            print(f"⚠️  WARNING: {name}={value} out of range [{min_val}, {max_val}]")
+            clamped = max(min_val, min(max_val, value))
+            print(f"   Clamping to {clamped}")
+            return clamped
+        return value
+    
+    # ========== ARGUMENT PARSER ==========
     parser = argparse.ArgumentParser(
-        description='Li-Fi + PV Simulator - Kadirvelu et al. IEEE TGCN 2021',
+        description='Li-Fi + PV Simulator - Enhanced CLI with Layer-by-Layer Configuration',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py                    Run default simulation
-  python main.py --figures all      Generate all paper figures
-  python main.py --figures 15,18    Generate specific figures
-  python main.py --validate         Run paper validation
-  python main.py --sensitivity      Run sensitivity analysis
-  python main.py --all              Run everything
+  # Default simulation
+  python main.py
+  
+  # Custom layer configuration
+  python main.py --tx-mod-depth 0.7 --ch-distance 2.0 --rx-cell poly-si
+  
+  # Energy-first mode (no TIA)
+  python main.py --no-tia --sim-rate 10000
+  
+  # Paper validation modes
+  python main.py --validate
+  python main.py --figures all
+  python main.py --sensitivity
         """
     )
     
-    parser.add_argument('--figures', '-f', type=str, default=None,
-                        help='Generate figures: "all" or comma-separated "13,15,18"')
-    parser.add_argument('--validate', '-v', action='store_true',
-                        help='Run paper validation mode')
-    parser.add_argument('--sensitivity', '-s', action='store_true',
-                        help='Run sensitivity analysis')
-    parser.add_argument('--all', '-a', action='store_true',
-                        help='Run everything (figures + validation + sensitivity)')
-    parser.add_argument('--quiet', '-q', action='store_true',
-                        help='Suppress verbose output')
+    # ========== LAYER 1: TRANSMITTER ==========
+    tx_group = parser.add_argument_group('Layer 1: Transmitter')
+    tx_group.add_argument('--tx-dc-bias', type=float, default=200,
+                          help='LED DC bias current (mA) [10-500]')
+    tx_group.add_argument('--tx-mod-depth', type=float, default=0.9,
+                          help='Modulation depth [0.1-1.0]')
+    tx_group.add_argument('--tx-efficiency', type=float, default=0.08,
+                          help='LED wall-plug efficiency (W/A) [0.01-0.5]')
+    
+    # ========== LAYER 2: CHANNEL ==========
+    ch_group = parser.add_argument_group('Layer 2: Channel')
+    ch_group.add_argument('--ch-distance', type=float, default=1.0,
+                          help='TX-RX distance (m) [0.1-10]')
+    ch_group.add_argument('--ch-beam-angle', type=float, default=30,
+                          help='LED half-power beam angle (deg) [5-60]')
+    ch_group.add_argument('--ch-rx-area', type=float, default=1.0,
+                          help='Receiver active area (cm²) [0.1-100]')
+    
+    # ========== LAYER 3: RECEIVER ==========
+    rx_group = parser.add_argument_group('Layer 3: Receiver (PV Cell)')
+    rx_group.add_argument('--rx-cell', type=str, default='gaas',
+                          choices=['gaas', 'poly-si', 'c-si', 'high-speed', 'custom'],
+                          help='PV cell preset or "custom" for manual parameters')
+    rx_group.add_argument('--rx-responsivity', type=float, default=None,
+                          help='Responsivity (A/W) [0.1-1.0] (overrides preset)')
+    rx_group.add_argument('--rx-capacitance', type=float, default=None,
+                          help='Junction capacitance (pF) [10-5000] (overrides preset)')
+    rx_group.add_argument('--rx-shunt-r', type=float, default=None,
+                          help='Shunt resistance (MΩ) [0.01-10] (overrides preset)')
+    
+    # ========== LAYER 3B: TIA ==========
+    tia_group = parser.add_argument_group('Layer 3b: TIA (Transimpedance Amplifier)')
+    tia_group.add_argument('--no-tia', action='store_true',
+                           help='Disable TIA, use direct PV output (energy-first mode)')
+    tia_group.add_argument('--tia-r', type=float, default=50e3,
+                           help='Transimpedance (Ω) [1e3-1e6]')
+    tia_group.add_argument('--tia-bw', type=float, default=3e6,
+                           help='3dB bandwidth (Hz) [100e3-50e6]')
+    
+    # ========== SIMULATION CONTROL ==========
+    sim_group = parser.add_argument_group('Simulation Control')
+    sim_group.add_argument('--sim-rate', type=float, default=1e6,
+                           help='Data rate (bps) [100-50e6]')
+    sim_group.add_argument('--sim-bits', type=int, default=1000,
+                           help='Number of bits to simulate [100-1e6]')
+    sim_group.add_argument('--sim-sps', type=int, default=500,
+                           help='Samples per bit [10-2000]')
+    
+    # ========== OUTPUT CONTROLS ==========
+    out_group = parser.add_argument_group('Output Controls')
+    out_group.add_argument('--out-dir', type=str, default='outputs/',
+                           help='Output directory')
+    out_group.add_argument('--out-no-csv', action='store_true',
+                           help='Disable CSV export')
+    out_group.add_argument('--out-no-plots', action='store_true',
+                           help='Disable plot generation')
+    out_group.add_argument('--out-downsample', type=int, default=1,
+                           help='Save every Nth sample to CSV')
+    
+    # ========== LEGACY MODE FLAGS ==========
+    mode_group = parser.add_argument_group('Paper Validation Modes (Legacy)')
+    mode_group.add_argument('--figures', '-f', type=str, default=None,
+                            help='Generate figures: "all" or comma-separated "13,15,18"')
+    mode_group.add_argument('--validate', '-v', action='store_true',
+                            help='Run paper validation mode')
+    mode_group.add_argument('--sensitivity', '-s', action='store_true',
+                            help='Run sensitivity analysis')
+    mode_group.add_argument('--all', '-a', action='store_true',
+                            help='Run everything (figures + validation + sensitivity)')
+    mode_group.add_argument('--quiet', '-q', action='store_true',
+                            help='Suppress verbose output')
     
     args = parser.parse_args()
     
-    # Determine what to run
+    # ========== CHECK FOR LEGACY MODES ==========
     if args.all:
         args.figures = 'all'
         args.validate = True
@@ -856,7 +966,7 @@ Examples:
         from utils.figures import generate_all_figures
         
         if args.figures.lower() == 'all':
-            fig_list = [13, 14, 15, 16, 17, 18, 19]  # All paper figures
+            fig_list = [13, 14, 15, 16, 17, 18, 19]
         else:
             fig_list = [int(f.strip()) for f in args.figures.split(',')]
         
@@ -874,11 +984,93 @@ Examples:
         run_paper_validation_mode(verbose=not args.quiet)
         ran_something = True
     
-    # Default: run simulation if nothing specified
+    # ========== RUN CUSTOM SIMULATION ==========
     if not ran_something:
-        print("\n🔬 Li-Fi + PV Simulator")
-        print("   Kadirvelu et al. IEEE TGCN 2021")
-        print("\nRun with --help to see all options.")
-        print("\nRunning default simulation...")
-        run_complete_simulation_with_tia(verbose=not args.quiet)
-
+        # Apply cell preset
+        if args.rx_cell != 'custom':
+            preset = CELL_PRESETS[args.rx_cell]
+            print(f"\n📱 Using PV cell preset: {args.rx_cell.upper()}")
+            print(f"   {preset['description']}")
+            
+            if args.rx_responsivity is None:
+                args.rx_responsivity = preset['responsivity']
+            if args.rx_capacitance is None:
+                args.rx_capacitance = preset['capacitance']
+            if args.rx_shunt_r is None:
+                args.rx_shunt_r = preset['shunt_resistance']
+        else:
+            print(f"\n📱 Using CUSTOM PV cell parameters")
+            # Default to GaAs if not specified
+            if args.rx_responsivity is None:
+                args.rx_responsivity = 0.457
+            if args.rx_capacitance is None:
+                args.rx_capacitance = 798
+            if args.rx_shunt_r is None:
+                args.rx_shunt_r = 0.1388
+        
+        # Validate and clamp parameters
+        args.tx_dc_bias = validate_and_clamp(args.tx_dc_bias, 10, 500, 'TX DC Bias')
+        args.tx_mod_depth = validate_and_clamp(args.tx_mod_depth, 0.1, 1.0, 'TX Modulation Depth')
+        args.tx_efficiency = validate_and_clamp(args.tx_efficiency, 0.01, 0.5, 'TX Efficiency')
+        
+        args.ch_distance = validate_and_clamp(args.ch_distance, 0.1, 10.0, 'Channel Distance')
+        args.ch_beam_angle = validate_and_clamp(args.ch_beam_angle, 5, 60, 'Channel Beam Angle')
+        args.ch_rx_area = validate_and_clamp(args.ch_rx_area, 0.1, 100, 'Channel RX Area')
+        
+        args.rx_responsivity = validate_and_clamp(args.rx_responsivity, 0.1, 1.0, 'RX Responsivity')
+        args.rx_capacitance = validate_and_clamp(args.rx_capacitance, 10, 5000, 'RX Capacitance')
+        args.rx_shunt_r = validate_and_clamp(args.rx_shunt_r, 0.01, 10, 'RX Shunt R')
+        
+        args.tia_r = validate_and_clamp(args.tia_r, 1e3, 1e6, 'TIA Transimpedance')
+        args.tia_bw = validate_and_clamp(args.tia_bw, 100e3, 50e6, 'TIA Bandwidth')
+        
+        args.sim_rate = validate_and_clamp(args.sim_rate, 100, 50e6, 'Simulation Rate')
+        args.sim_bits = int(validate_and_clamp(args.sim_bits, 100, 1e6, 'Simulation Bits'))
+        args.sim_sps = int(validate_and_clamp(args.sim_sps, 10, 2000, 'Samples Per Bit'))
+        
+        # Build config dictionary
+        config = {
+            'simulation': {
+                'data_rate_bps': args.sim_rate,
+                'samples_per_bit': args.sim_sps,
+                'n_bits': args.sim_bits
+            },
+            'transmitter': {
+                'dc_bias': args.tx_dc_bias,
+                'modulation_depth': args.tx_mod_depth,
+                'led_efficiency': args.tx_efficiency
+            },
+            'channel': {
+                'distance': args.ch_distance,
+                'beam_angle_half': args.ch_beam_angle,
+                'receiver_area': args.ch_rx_area
+            },
+            'receiver': {
+                'responsivity': args.rx_responsivity,
+                'capacitance': args.rx_capacitance,
+                'shunt_resistance': args.rx_shunt_r,
+                'dark_current': 1.0,
+                'temperature': 300
+            },
+            'tia': {
+                'R_tia': args.tia_r,
+                'f_3db': args.tia_bw
+            }
+        }
+        
+        # Display configuration summary
+        print(f"\n🔬 Li-Fi + PV Simulator - Custom Configuration")
+        print(f"{'='*80}")
+        
+        # Run simulation
+        enable_csv = not args.out_no_csv
+        
+        if args.no_tia:
+            print("⚠️  TIA DISABLED - Using direct PV output (energy-first mode)")
+            print("   Communication bandwidth limited by PV cell RC time constant")
+        
+        run_complete_simulation_with_tia(
+            config=config,
+            export_csv=enable_csv,
+            verbose=not args.quiet
+        )
