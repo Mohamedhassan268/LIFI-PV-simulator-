@@ -8,6 +8,7 @@ from simulator.transmitter import Transmitter
 from simulator.channel import OpticalChannel
 from simulator.receiver import PVReceiver
 from simulator.demodulator import Demodulator
+from utils.output_manager import get_general_output_dir
 
 
 def run_complete_simulation_with_tia(config=None, export_csv=True, verbose=True):
@@ -300,10 +301,13 @@ def run_complete_simulation_with_tia(config=None, export_csv=True, verbose=True)
         'samples_per_bit': sps,
     }
     
-    # Export to CSV
+    # Export to CSV and save plots
     if export_csv:
-        output_dir = Path('outputs/csv')
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Create output folders
+        output_dir = Path(get_general_output_dir())  # outputs/general/Jan16_11pm_test1/
+        csv_dir = Path('outputs/csv')  # CSVs stay in central location
+        csv_dir.mkdir(parents=True, exist_ok=True)
+        
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Create DataFrame with ALL samples + ALL metadata
@@ -353,23 +357,111 @@ def run_complete_simulation_with_tia(config=None, export_csv=True, verbose=True)
         waveform_df['n_bits'] = n_bits
         waveform_df['samples_per_bit'] = sps
         
-        # Save waveforms (all samples with all metadata)
-        waveform_file = output_dir / f"waveforms_{timestamp}.csv"
+        # Save waveforms to central CSV folder
+        waveform_file = csv_dir / f"waveforms_{timestamp}.csv"
         waveform_df.to_csv(waveform_file, index=False)
         
-        # Save summary metrics (single row)
+        # Save summary metrics to test folder
         summary_df = pd.DataFrame([results])
-        summary_file = output_dir / f"summary_{timestamp}.csv"
+        summary_file = output_dir / f"summary.csv"
         summary_df.to_csv(summary_file, index=False)
         
         if verbose:
-            print(f"\n  ✓ Results exported to CSV:")
+            print(f"\n  ✓ Results exported:")
+            print(f"    Test folder: {output_dir}")
+            print(f"    Summary: {summary_file}")
             print(f"    Waveforms: {waveform_file}")
             print(f"      - Rows: {len(waveform_df):,} samples")
-            print(f"      - Columns: {len(waveform_df.columns)} (12 waveforms + 22 metadata)")
             print(f"      - File size: ~{waveform_file.stat().st_size / 1024:.1f} KB")
-            print(f"    Summary: {summary_file}")
-            print(f"      - Columns: {len(results)}")
+        
+        # ========== GENERATE PLOTS ==========
+        import matplotlib.pyplot as plt
+        
+        # Plot 1: Time-Domain Waveforms (first 50 bits)
+        n_bits_show = min(50, n_bits)
+        n_samples_show = n_bits_show * sps
+        t_show = t[:n_samples_show] * 1e6  # Convert to microseconds
+        
+        fig, axes = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+        
+        axes[0].plot(t_show, P_tx[:n_samples_show] * 1e3, 'b-', linewidth=0.5)
+        axes[0].set_ylabel('P_tx (mW)')
+        axes[0].set_title(f'Time-Domain Waveforms (First {n_bits_show} bits)')
+        axes[0].grid(True, alpha=0.3)
+        
+        axes[1].plot(t_show, P_rx_clean[:n_samples_show] * 1e6, 'g-', linewidth=0.5)
+        axes[1].set_ylabel('P_rx (μW)')
+        axes[1].grid(True, alpha=0.3)
+        
+        axes[2].plot(t_show, V_tia[:n_samples_show] * 1e3, 'r-', linewidth=0.5)
+        axes[2].set_ylabel('V_tia (mV)')
+        axes[2].grid(True, alpha=0.3)
+        
+        axes[3].plot(t_show, V_data_lpf[:n_samples_show] * 1e3, 'm-', linewidth=0.5)
+        axes[3].set_ylabel('V_data (mV)')
+        axes[3].set_xlabel('Time (μs)')
+        axes[3].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'time_domain_waveforms.png', dpi=150)
+        plt.close()
+        
+        # Plot 2: Eye Diagram
+        fig, ax = plt.subplots(figsize=(8, 6))
+        for i in range(min(200, n_bits - 1)):
+            start_idx = i * sps
+            end_idx = start_idx + 2 * sps
+            if end_idx <= len(V_data_lpf):
+                segment = V_data_lpf[start_idx:end_idx] * 1e3
+                t_eye = np.linspace(0, 2, len(segment))
+                ax.plot(t_eye, segment, 'b-', alpha=0.1, linewidth=0.5)
+        
+        ax.set_xlabel('Time (bit periods)')
+        ax.set_ylabel('Amplitude (mV)')
+        ax.set_title(f'Eye Diagram (Q={q_factor:.2f}, BER={ber:.2e})')
+        ax.grid(True, alpha=0.3)
+        ax.axvline(1.0, color='r', linestyle='--', alpha=0.5, label='Sample point')
+        ax.legend()
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'eye_diagram.png', dpi=150)
+        plt.close()
+        
+        # Plot 3: Signal Constellation / Sampled Values
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.hist(samples[bits_tx == 0] * 1e3, bins=30, alpha=0.7, label='Bit 0', color='blue')
+        ax.hist(samples[bits_tx == 1] * 1e3, bins=30, alpha=0.7, label='Bit 1', color='red')
+        ax.axvline(threshold * 1e3, color='green', linestyle='--', linewidth=2, label=f'Threshold ({threshold*1e3:.2f} mV)')
+        ax.set_xlabel('Sample Amplitude (mV)')
+        ax.set_ylabel('Count')
+        ax.set_title(f'Sample Distribution (Separation={abs(mu_1-mu_0)*1e3:.2f} mV)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'sample_distribution.png', dpi=150)
+        plt.close()
+        
+        # Plot 4: Energy Harvesting
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(t * 1e3, P_harv_inst * 1e6, 'g-', linewidth=0.5, alpha=0.5, label='Instantaneous')
+        ax.axhline(P_harv_avg * 1e6, color='r', linestyle='--', linewidth=2, label=f'Average ({P_harv_avg*1e6:.3f} μW)')
+        ax.set_xlabel('Time (ms)')
+        ax.set_ylabel('Harvested Power (μW)')
+        ax.set_title('Energy Harvesting Performance')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'energy_harvesting.png', dpi=150)
+        plt.close()
+        
+        if verbose:
+            print(f"\n  ✓ Plots saved:")
+            print(f"    - time_domain_waveforms.png")
+            print(f"    - eye_diagram.png")
+            print(f"    - sample_distribution.png")
+            print(f"    - energy_harvesting.png")
     
     if verbose:
         print(f"\n{'='*80}")

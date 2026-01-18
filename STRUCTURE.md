@@ -10,8 +10,25 @@ This project simulates Visible Light Communication (VLC) systems using Photovolt
 | `validate_mimo_ofdm.py` | **MIMO Benchmark**. Demonstrates 4x4 MIMO and Adaptive OFDM features. |
 | `simulator/` | **Core Library**. Physics-based simulation modules. |
 | `papers/` | **Plugins**. Validation scripts for specific research papers. |
-| `utils/` | **Helpers**. Constants, plotting tools, and configs. |
-| `outputs/` | **Results**. Generated plots, logs, and CSVs. |
+| `utils/` | **Helpers**. Constants, plotting tools, and output management. |
+| `outputs/` | **Results**. Organized by paper with versioned test folders. |
+
+## Output Organization
+
+Each paper validation saves outputs to its own folder with versioned test runs:
+
+```
+outputs/
+├── paper_correa_2025/
+│   ├── test1/
+│   │   ├── fig6_power_vs_distance.png
+│   │   ├── run_info.txt
+│   │   └── ...
+│   └── test2/
+├── paper_xu_2024/
+│   └── test1/
+└── general/  (non-paper tests)
+```
 
 ## 1. Core Library (`simulator/`)
 

@@ -248,3 +248,124 @@ For detailed help with all arguments:
 python main.py --help
 
 ================================================================================
+PHASE 1-8 ADDITIONS (2026-01-17)
+================================================================================
+
+# Paper Validation Commands
+# -------------------------
+python papers/kadirvelu_2021.py      # Generate all 7 figures (13-19)
+python papers/correa_2025.py         # Greenhouse VLC validation
+python papers/sarwar_2017.py         # 15 Mbps OFDM validation
+
+# Module Self-Tests
+# -----------------
+python simulator/dc_dc_converter.py  # DC-DC efficiency tests (67%, 56.4%, 42%)
+python simulator/modulation.py       # PWM-ASK and OFDM bit loading tests
+python simulator/demodulator.py      # Demodulator unit tests
+
+# Phase 3: PWM-ASK Modulator Usage
+# --------------------------------
+python -c "
+from simulator.modulation import PWMASKModulator
+mod = PWMASKModulator(pwm_freq_hz=10.0, carrier_freq_hz=10000.0)
+t, signal = mod.modulate([0, 1, 1, 0])
+print(f'Signal samples: {len(signal)}')
+"
+
+# Phase 3: Adaptive OFDM Bit Loading
+# ----------------------------------
+python -c "
+from simulator.modulation import AdaptiveOFDMModulator, calculate_bit_loading
+import numpy as np
+ofdm = AdaptiveOFDMModulator(nfft=64, cp_length=16)
+snr = np.array([-5, 4, 8, 12, 20])
+print('Bit allocation:', calculate_bit_loading(snr))  # [0, 1, 2, 4, 6]
+"
+
+# Phase 4: Bandwidth Calculation
+# ------------------------------
+python -c "
+from simulator.receiver import PVReceiver
+rx = PVReceiver({'capacitance': 3200})  # 3.2 nF
+print('BW @ 220 Ohm:', int(rx.calculate_bandwidth(220)), 'Hz')
+"
+
+# Phase 4: Photoconductive Mode
+# -----------------------------
+python -c "
+from simulator.receiver import PVReceiver
+rx_pv = PVReceiver({'capacitance': 1000, 'mode': 'photovoltaic'})
+rx_pc = PVReceiver({'capacitance': 1000, 'mode': 'photoconductive'})
+print(f'C_j reduction: {rx_pv.C_j / rx_pc.C_j:.1f}x')  # 3.0x
+"
+
+# Phase 5: Temperature Sweep
+# --------------------------
+python -c "
+from simulator.receiver import PVReceiver
+rx = PVReceiver()
+result = rx.sweep_temperature()
+print('V_T @ 27C:', result['V_T_mV'][2], 'mV')
+"
+
+# Phase 6: DC-DC Efficiency
+# -------------------------
+python -c "
+from simulator.dc_dc_converter import DCDCConverter
+dcdc = DCDCConverter({'fsw_khz': 100})
+print('Efficiency @ 100kHz:', dcdc.get_efficiency() * 100, '%')  # 56.4%
+"
+
+# Phase 7: BER with Strict Mode
+# -----------------------------
+python -c "
+from simulator.demodulator import Demodulator
+import numpy as np
+demod = Demodulator({'sample_rate': 10e6})
+tx = np.array([0, 1, 0, 1, 1, 0])
+rx = np.array([0, 1, 1, 1, 1, 0])
+result = demod.calculate_ber(tx, rx, strict=True, mismatch_tolerance=0.1)
+print('BER:', result['ber'], 'Sync Loss:', result['sync_loss_rate'])
+"
+
+# Phase 8: Run All Validations
+# ----------------------------
+python papers/kadirvelu_2021.py && python papers/correa_2025.py && python papers/sarwar_2017.py
+
+================================================================================
+NEW LAYER 3 ARGUMENTS (Phase 4)
+================================================================================
+
+--rx-mode <value>
+    Operating mode
+    Choices: photovoltaic, photoconductive
+    Default: photovoltaic
+    Example: --rx-mode photoconductive
+    Note: Photoconductive mode reduces C_j by 3x for higher bandwidth
+
+--rx-rload <value>
+    Load resistance for bandwidth calculation (Ω)
+    Range: [10-1e6]
+    Default: 1000
+    Example: --rx-rload 220
+    Note: Lower R_load = higher bandwidth but lower voltage
+
+================================================================================
+NEW ENVIRONMENT ARGUMENTS (Phase 5)
+================================================================================
+
+--ch-humidity-layer <value>
+    Humidity layer depth (m) - Beer-Lambert attenuation zone
+    Range: [0.1-10]
+    Default: 0.6
+    Example: --ch-humidity-layer 0.8
+
+--rx-temperature <value>
+    Operating temperature (K)
+    Range: [273-353]
+    Default: 300
+    Example: --rx-temperature 323  # 50°C
+
+================================================================================
+# Last updated: 2026-01-17 (Phase 1-8 complete)
+================================================================================

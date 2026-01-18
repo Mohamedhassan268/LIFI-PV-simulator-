@@ -1,0 +1,78 @@
+Correa-Morales et al. (2025) — Validation Reference (Source of Truth)
+
+Paper metadata
+- Full title: Experimental design and performance evaluation of a solar panel-based visible light communication system for greenhouse applications
+- Authors: Guillermo Correa Morales, Pablo Palacios Játiva, Diego Dujovne, Luciano Ahumada, César Azurdia Meza, Iván Sánchez Salazar, Ismael Soto, Carlos Saavedra Arancibia
+- Venue: Scientific Reports (Nature Portfolio)
+- Volume/Date: Vol. 15, Article 4518 (2025)
+- DOI: 10.1038/s41598-025-29067-2
+
+Scope (what this reference validates)
+This document captures the parameter values, measurement conditions, figure targets, and system behaviors for validating a simulator against the "Correa-Morales et al." greenhouse VLC system. The paper focuses on using a commercial solar panel as a receiver in a high-humidity environment with hybrid PWM-ASK modulation.
+
+============================================================
+1) Key experimental conditions (Hardware & Geometry)
+============================================================
+Receiver Design
+- Solar Panel: Commercial mini solar panel (specific model not named, but characterized as having low-pass behavior).
+- Signal Conditioning: Custom bias-free analog conditioning circuit (to handle PV low-pass nature).
+- Digitization: ADC (12-bit, 4095 levels, 3.3V ref).
+- Sampling: 10 Hz baseband PWM envelope.
+
+Transmitter (Hybrid Modulation)
+- Source: 30 W White LED.
+- Modulation Scheme: PWM-ASK (Pulse Width Modulation + Amplitude Shift Keying).
+- Carrier: 10 kHz Sinusoidal (ASK part).
+- Envelope: 10 Hz PWM (Data part).
+- PWM Duty Cycles:
+  - Logic '1': 25% ON / 75% OFF
+  - Logic '0': 75% ON / 25% OFF
+  - (Note: The paper text says "25/75 ms" for '1' and "75/25 ms" for '0', implying the pulse width encodes the bit).
+- DC Bias: 20 V DC offset added via Bias Tee to make signal unipolar.
+
+Environment (Greenhouse)
+- Dimensions: 126 × 49 × 69 cm.
+- Humidity: Varied between 30% and 80% (using USB humidifier).
+- Distances: Tested from 30 cm to 130 cm (vertical height variations).
+- Interference: Live plants included for scattering/blocking effects.
+
+============================================================
+2) Measured Performance Targets (Headline Numbers)
+============================================================
+BER vs. Distance (High Humidity)
+- Range < 0.4 m: BER ≈ 10^-3 (Good link).
+- Range 0.55 m - 0.70 m: BER degrades to 10^-2 - 10^-1.
+- Range > 1.0 m: Link fails (Performance significantly degrades).
+
+Sensitivity Limits
+- The solar panel's large capacitance limits frequency response, requiring the low-frequency (10 Hz) PWM approach for robust detection.
+
+============================================================
+3) Figure Targets & System Behaviors
+============================================================
+
+Signal Processing Algorithm (Eq. 9-12)
+- Step 1 (Voltage): V = (ADC/4095) * 3.3
+- Step 2 (SDM): Square Deviation Metric = (V - Offset)^2
+- Step 3 (Enhancement): SDMcrop (selectively boosts transitions).
+- Step 4 (AddProd): Weighted product sum feature.
+- Step 5 (Classification): Threshold at 0.01.
+  - If AddProd >= 0.01 -> State 1.
+  - Else -> State 0.
+- Validation Goal: Implement this specific detection chain in the simulator and verify it recovers the 10 Hz PWM bits from the noisy/humid channel model.
+
+Impact of Humidity (Qualitative/Quantitative)
+- Trend: Higher humidity increases scattering, reducing Received Optical Power (ROP).
+- Validation Goal: Simulator should show BER increasing as humidity parameter rises from 30% to 80% at fixed distances (e.g., at 0.6m).
+
+Comparison with Photodetectors
+- Solar panels are less sensitive than PDs at long range (>1m) but viable for short-range (<0.5m) energy-harvesting links.
+
+============================================================
+4) Validation Notes / Common Pitfalls
+============================================================
+- Modulation Frequencies: The 10 Hz PWM is extremely slow compared to other papers (MHz/kHz). This is intentional to overcome the solar panel's RC time constant. Simulator must handle this "slow-fading" scale.
+- Carrier vs. Data: The "10 kHz" is the *carrier* (ASK), while the *data* is in the 10 Hz PWM width. The solar panel might filter the 10 kHz carrier, acting as an envelope detector naturally. Verify if the receiver circuit rectifies or if the panel bandwidth allows the carrier to pass (likely the latter if conditioning is used).
+- "Bias-Free": The receiver circuit does not externally bias the panel (it operates in photovoltaic mode), unlike PDs which are often reverse-biased.
+
+End of validation reference.

@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from simulator.transmitter import Transmitter
 from simulator.channel import OpticalChannel
 from simulator.receiver import MIMOPVReceiver, ReconfigurablePVArray
+from utils.output_manager import get_paper_output_dir
 
 # ==============================================================================
 # PARAMETERS (Xu et al. 2024 - Sunlight-Duo)
@@ -66,14 +67,14 @@ def get_paper_config():
         }
     }
 
-def run_validation(output_dir="outputs/xu_2024"):
+def run_validation(output_dir=None):
     """
     Run the validation suite for Xu et al. (2024).
     """
     import os
-    os.makedirs(output_dir, exist_ok=True)
-    plot_dir = os.path.join(output_dir, "plots")
-    os.makedirs(plot_dir, exist_ok=True)
+    if output_dir is None:
+        output_dir = get_paper_output_dir('xu_2024')
+    plot_dir = output_dir  # All outputs go directly in test folder
     
     print("VALIDATING Xu et al. (2024) - Sunlight-Duo")
     print("="*60)
@@ -248,3 +249,7 @@ def run_validation(output_dir="outputs/xu_2024"):
         print(f"  [WARNING] Voltage low ({np.mean(V_sig):.2f} V). Check Series logic.")
         
     return True
+
+
+if __name__ == "__main__":
+    run_validation()

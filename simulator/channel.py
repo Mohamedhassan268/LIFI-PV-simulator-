@@ -1,9 +1,13 @@
 # simulator/channel.py
 """
-Free-space Optical Wireless Channel: Lambertian Path Loss + AWGN Noise
+Free-space Optical Wireless Channel: Lambertian Path Loss + Beer-Lambert Attenuation + AWGN Noise
 
 Equation 2: Lambertian Path Loss
   P_rx = [(m_L+1) * A_rx / (2pi * r^2)] * P_tx * cos^m_L(phi) * cos(psi)
+
+Beer-Lambert Atmospheric Attenuation (Correa 2025):
+  P_rx *= exp(-α * d)
+  where α depends on humidity (higher humidity → higher attenuation)
 
 Equations 3-5: Noise Model (Shot + Thermal)
   S_shot = 2*q*I_ph*B
@@ -54,6 +58,13 @@ class OpticalChannel:
         
         # Channel geometry
         self.distance = params.get('distance', 1.0)  # meters
+        
+        # Sanity check for distance (Conflict 10 fix)
+        if self.distance > 10.0:
+            print(f"WARNING: distance={self.distance}m > 10m. Did you mean {self.distance*0.01:.3f}m (cm→m)?")
+        if self.distance < 0.05:
+            print(f"WARNING: distance={self.distance}m < 5cm. Very short range, check units.")
+        
         self.beam_angle_deg = params.get('beam_angle_half', LED_BEAM_HALF_ANGLE_DEG)  # deg
         self.rx_area_cm2 = params.get('receiver_area', RX_AREA_CM2)  # cm^2
         self.rx_area_m2 = self.rx_area_cm2 * 1e-4  # Convert to m^2
@@ -65,14 +76,80 @@ class OpticalChannel:
         # Temperature for thermal noise
         self.temp_k = params.get('temperature', ROOM_TEMPERATURE_K)  # K
         
+        # ========== BEER-LAMBERT ATTENUATION ==========
+        # Humidity-dependent atmospheric absorption (Correa 2025)
+        humidity_input = params.get('humidity', None)  # 0-1 scale (None = disabled)
+        
+        # Auto-detect and normalize humidity input (Conflict 8 fix)
+        if humidity_input is not None:
+            if humidity_input > 1.0:
+                # Likely passed as percentage (0-100), convert to fraction
+                print(f"WARNING: humidity={humidity_input} > 1, assuming percentage, converting to {humidity_input/100:.2f}")
+                humidity_input = humidity_input / 100.0
+            humidity_input = np.clip(humidity_input, 0.0, 1.0)
+        
+        self.humidity = humidity_input
+        self.attenuation_alpha = self._compute_alpha(self.humidity)
+        
+        # FIX 5: Humidity layer depth - attenuation only applies within this zone
+        # Beyond this distance, humidity effect saturates (curves converge)
+        self.humidity_layer_depth = params.get('humidity_layer_depth', 0.6)  # meters
+        
         # Compute Lambertian order
         self.m_L = lambertian_order(self.beam_angle_deg)
-        
+
+        # Scattering / Multipath Configuration
+        self.enable_multipath = params.get('multipath', False)
+        self.room_dim = params.get('room_dimensions', None)  # dict with {width, length, height, reflection}
+
         print(f"[OK] Channel initialized:")
         print(f"    Distance: {self.distance} m")
         print(f"    Beam half-angle: {self.beam_angle_deg} deg")
         print(f"    Lambertian order (m_L): {self.m_L:.2f}")
         print(f"    RX area: {self.rx_area_cm2} cm^2")
+        if self.humidity is not None:
+            print(f"    Humidity: {self.humidity*100:.0f}%")
+            print(f"    Beer-Lambert α: {self.attenuation_alpha:.3f} m⁻¹")
+            print(f"    Humidity layer: {self.humidity_layer_depth:.2f} m")
+        if self.enable_multipath:
+            print(f"    Multipath: Enabled (Ceiling bounce)")
+    
+    def _compute_alpha(self, humidity):
+        """
+        Compute Beer-Lambert attenuation coefficient from humidity.
+        
+        Calibrated to match Correa Morales 2025 Fig. 6 behavior:
+        - α increases with humidity (more water vapor → more absorption)
+        - Range: ~0.5 m⁻¹ (30% RH) to ~5.0 m⁻¹ (80% RH)
+        - Strong effect at short distance, converges at long distance
+        
+        Model: α = α_base + α_scale × (RH - 0.3)^1.5
+        
+        Args:
+            humidity: Relative humidity as fraction (0-1), or None to disable
+            
+        Returns:
+            α: Attenuation coefficient (m⁻¹)
+        """
+        if humidity is None:
+            return 0.0  # No Beer-Lambert attenuation
+        
+        # Clamp humidity to valid range
+        humidity = np.clip(humidity, 0.0, 1.0)
+        
+        # FIX 2: Increased α values by ~5× for stronger humidity effect
+        # Baseline attenuation at 30% RH
+        alpha_base = 0.5  # m⁻¹ (was 0.1)
+        
+        # Humidity-dependent component
+        # Paper formula: α = 0.5 + 9 × (RH − 0.3) × 1.5
+        # Note: Uses MULTIPLICATION, not exponentiation
+        if humidity >= 0.3:
+            alpha_humidity = 9.0 * (humidity - 0.3) * 1.5  # FIXED: was ** 1.5
+        else:
+            alpha_humidity = 0.0
+        
+        return alpha_base + alpha_humidity
     
     def compute_h_matrix(self, tx_pos_list, rx_pos_list, tx_normal_list=None, rx_normal_list=[[0,0,1]]):
         """
@@ -136,10 +213,73 @@ class OpticalChannel:
                     
         return H
 
+    
+    def _compute_ceiling_bounce_impulse(self, room_dim):
+        """
+        Compute impulse response of ceiling bounce (1st order reflection).
+        
+        Simple model assumes:
+        - Lambertian source pointing up/down interacts with ceiling
+        - Receiver pointing up
+        - Single dominant reflection path
+        (Simplified for 1D/2D simulation context)
+        
+        Args:
+            room_dim (dict): {'width': w, 'length': l, 'height': h, 'reflection_coeff': rho}
+            
+        Returns:
+            gain (float): Integrated path gain for NLOS
+            delay (float): Time delay relative to LOS (seconds)
+        """
+        # Default room if not specified
+        if room_dim is None:
+            h_room = 3.0  # meters
+            rho = 0.8     # Typical white ceiling
+        else:
+            h_room = room_dim.get('height', 3.0)
+            rho = room_dim.get('reflection_coeff', 0.8)
+            
+        # Simplest geometric model for ceiling bounce delay
+        # Path: TX -> Ceiling -> RX
+        # Assume TX and RX are at desk height (e.g., 0.8m)
+        h_desk = 0.8
+        h_ceil = h_room - h_desk
+        
+        # LOS distance
+        d_los = self.distance
+        
+        # NLOS distance (bounce off ceiling midpoint)
+        # d_nlos = 2 * sqrt((d/2)^2 + h_ceil^2)
+        d_nlos = 2 * np.sqrt((d_los/2)**2 + h_ceil**2)
+        
+        # Delay (relative to LOS, but propagate() adds absolute delay implicitly if we model full channel)
+        # Here we model the *additional* delay for the multipath tap
+        delta_d = d_nlos - d_los
+        delay = delta_d / 3.0e8  # seconds
+        
+        # Path loss for NLOS
+        # Just use square law + reflection coeff as approximation for diffuse reflection
+        # P_nlos = P_tx * rho * (A / 2pi d_nlos^2) ... roughly
+        # Better: use channel DC gain formula for Ceiling Bounce
+        
+        # Standard Ceiling Bounce Model (Carruthers & Kahn):
+        # H(0)_diff = rho * A_rx / (3 * pi * h_ceil^2) * ... (depends heavily on FOV)
+        # Let's use a simplified scaling relative to LOS for this "first implementation"
+        # typically NLOS is 10-20 dB below LOS for directed beams
+        
+        # Distance factor ratio
+        dist_factor = (d_los / d_nlos) ** 2
+        
+        # Gain relative to LOS gain
+        # gain_nlos = gain_los * rho * dist_factor * (diffuse_penalty)
+        gain_relative = rho * dist_factor * 0.5 # 0.5 for diffuse scattering loss
+        
+        return gain_relative, delay
+
     def propagate(self, P_tx, t, H_matrix=None, verbose=False):
         """
         Propagate optical signal through Lambertian channel.
-        Supports SISO (scalar) and MIMO (matrix) modes.
+        Supports SISO (scalar), MIMO (matrix), and Scattering (Multipath).
         
         Args:
             P_tx (array): 
@@ -183,14 +323,48 @@ class OpticalChannel:
 
         # SISO MODE (Default)
         # On-axis: cos^m_L(0) = 1, cos(0) = 1
-        gain_linear = ((self.m_L + 1) * self.rx_area_m2) / (2 * np.pi * self.distance**2)
+        gain_lambertian = ((self.m_L + 1) * self.rx_area_m2) / (2 * np.pi * self.distance**2)
         
-        # Apply to all samples
-        P_rx = gain_linear * P_tx
+        # Beer-Lambert atmospheric attenuation
+        # FIX 5: Only apply attenuation within humidity layer
+        d_attenuated = min(self.distance, self.humidity_layer_depth)
+        beer_lambert_factor = np.exp(-self.attenuation_alpha * d_attenuated)
+        
+        # Combined LOS gain
+        gain_los_total = gain_lambertian * beer_lambert_factor
+        
+        # Apply LOS gain
+        P_rx = gain_los_total * P_tx
+        
+        # MULTIPATH / SCATTERING (Ceiling Bounce)
+        if hasattr(self, 'enable_multipath') and self.enable_multipath:
+            # Calculate NLOS component
+            gain_rel, delay_s = self._compute_ceiling_bounce_impulse(self.room_dim)
+            gain_nlos = gain_los_total * gain_rel
+            
+            # Convert delay to samples
+            dt = t[1] - t[0]
+            delay_samples = int(round(delay_s / dt))
+            
+            if delay_samples > 0 and delay_samples < len(P_tx):
+                # Create delayed copy
+                P_nlos = np.zeros_like(P_tx)
+                P_nlos[delay_samples:] = P_tx[:-delay_samples] * gain_nlos
+                
+                # Add to Rx
+                P_rx += P_nlos
+                
+                if verbose:
+                    print(f"  Multipath Added:")
+                    print(f"    NLOS Gain: {gain_nlos:.3e} (Rel: {gain_rel:.3f})")
+                    print(f"    Delay: {delay_s*1e9:.1f} ns ({delay_samples} samples)")
         
         if verbose:
             print(f"\nChannel Propagation (SISO):")
-            print(f"  Path loss gain: {gain_linear:.3e}")
+            print(f"  Lambertian gain: {gain_lambertian:.3e}")
+            if self.attenuation_alpha > 0:
+                print(f"  Beer-Lambert factor: {beer_lambert_factor:.4f} (α={self.attenuation_alpha:.3f} m⁻¹, d_att={d_attenuated:.2f}m)")
+            print(f"  Total LOS gain: {gain_los_total:.3e}")
             if hasattr(P_tx, 'min'):
                  print(f"  P_tx range: {P_tx.min()*1e3:.3f} - {P_tx.max()*1e3:.3f} mW")
                  print(f"  P_rx range: {P_rx.min()*1e6:.3f} - {P_rx.max()*1e6:.3f} uW")

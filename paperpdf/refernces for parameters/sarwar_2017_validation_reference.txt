@@ -1,0 +1,65 @@
+Sarwar et al. (2017) — Validation Reference (Source of Truth)
+
+Paper metadata
+- Full title: Visible Light Communication Using a Solar-Panel Receiver
+- Authors: Rohail Sarwar, Bin Sun, Meiwei Kong, Tariq Ali, Chuying Yu, Bo Cong, Jing Xu
+- Venue: 2017 16th International Conference on Optical Communications and Networks (ICOCN)
+- Date: 2017
+- DOI: 10.1109/ICOCN.2017.8121295 (Inferred from context, strictly use title/authors if uncertain)
+
+Scope (what this reference validates)
+This document captures the parameter values and experimental results for validating a simulator against the "Sarwar et al." system. The paper focuses on a high-speed (15 Mbps) link using a commercial silicon solar panel and 16-QAM OFDM modulation.
+
+============================================================
+1) Key experimental conditions (Hardware & Geometry)
+============================================================
+Receiver Design
+- Solar Panel: Commercial Silicon Solar Panel
+- Dimensions: 25 mm x 30 mm (Area = 7.5 cm^2)
+- Circuitry: No external power supply (Passive mode). No transimpedance amplifier (TIA) mentioned; signal amplified by external commercial amplifiers (Mini-Circuits ZHL-6A+).
+- Filters: 98-MHz Low-pass filter (SLP-100+).
+
+Transmitter
+- Source: 3-Watt Blue LED
+- Modulation: 16-QAM OFDM (Orthogonal Frequency Division Multiplexing)
+- Driver: Arbitrary Waveform Generator (Tektronix AWG 70002A) -> Amplifier (ZHL-6A+) -> Bias-Tee (ZFBT-4R2GW+).
+
+Channel / Geometry
+- Distance: 2 meters (Air channel)
+- Optics: Pair of focusing lenses deployed after the LED and before the solar panel.
+
+============================================================
+2) Measured Performance Targets (Headline Numbers)
+============================================================
+Data Rate & Reliability
+- Net Data Rate: 15.03 Mbit/s
+- Bit Error Rate (BER): 1.6883 x 10^-3
+- Peak-to-Peak Voltage (Vpp): 126.9 mV (at receiver output)
+
+============================================================
+3) Figure Targets & System Behaviors
+============================================================
+
+FIG. 4 — BER vs. Subcarrier Index
+Description: BER performance across the OFDM subcarriers.
+- X-axis: Subcarrier Index (frequency bin).
+- Y-axis: Bit Error Rate (BER).
+- Trend: Higher BER in high-frequency regions (due to bandwidth limitation of the solar panel).
+- Validation Goal: Simulator should show a "low-pass" filtering effect where higher subcarriers degrade in SNR/BER.
+
+FIG. 5 — EVM vs. Subcarrier Index
+Description: Error Vector Magnitude (EVM) per subcarrier.
+- Trend: Mirrors the BER trend; EVM increases with subcarrier index.
+
+FIG. 7 — Constellation Diagram
+Description: 16-QAM Constellation.
+- Visual Target: 16 distinct clusters.
+- Quality: "Well converged" (tight clusters), though likely showing some spreading at outer edges due to the 1.6e-3 BER.
+
+============================================================
+4) Validation Notes
+============================================================
+- Bandwidth: The paper mentions using a 98-MHz LPF, but the solar panel itself likely has a much lower 3dB bandwidth (typically kHz to low MHz). The fact that they achieve 15 Mbps suggests they are using bit-loading or that the "passive" mode (low load resistance) significantly extended the bandwidth.
+- Blue LED: Using a Blue LED typically yields higher bandwidth for phosphorescent white LEDs, but here it's a dedicated Blue LED, so the transmitter bandwidth is likely high (MHz range). The bottleneck is the solar panel.
+
+End of validation reference.

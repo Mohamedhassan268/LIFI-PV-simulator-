@@ -341,14 +341,34 @@ class PVReceiver:
                 - 'shunt_resistance': R_sh (MOhm)
                 - 'dark_current': I_0 (nA)
                 - 'temperature': T (K)
+                - 'mode': 'photovoltaic' (default) or 'photoconductive'
         """
         
         if params is None:
             params = {}
         
+        # Operating mode (Phase 4 enhancement)
+        self.mode = params.get('mode', 'photovoltaic')
+        assert self.mode in ('photovoltaic', 'photoconductive'), \
+            "Mode must be 'photovoltaic' or 'photoconductive'"
+        
         # Physical parameters
         self.R = params.get('responsivity', PHOTODIODE_RESPONSIVITY_A_PER_W)  # A/W
-        self.C_j = params.get('capacitance', PHOTODIODE_JUNCTION_CAP_PF) * 1e-12  # pF -> F
+        
+        # Base capacitance (before mode adjustment)
+        base_capacitance_pf = params.get('capacitance', PHOTODIODE_JUNCTION_CAP_PF)
+        
+        # Photoconductive mode: reverse bias reduces junction capacitance by ~2-5x
+        # and increases bandwidth, but eliminates energy harvesting
+        if self.mode == 'photoconductive':
+            # Typical reduction factor for reverse-biased junction
+            capacitance_reduction = params.get('capacitance_reduction', 3.0)
+            self.C_j = (base_capacitance_pf / capacitance_reduction) * 1e-12  # pF -> F
+            self._mode_note = f"(C_j reduced {capacitance_reduction}x for reverse bias)"
+        else:
+            self.C_j = base_capacitance_pf * 1e-12  # pF -> F
+            self._mode_note = ""
+        
         self.R_sh = params.get('shunt_resistance', PHOTODIODE_SHUNT_RESISTANCE_MOHM) * 1e6  # MOhm -> Ohm
         self.I_0 = params.get('dark_current', PHOTODIODE_DARK_CURRENT_NA) * 1e-9  # nA -> A
         self.T = params.get('temperature', ROOM_TEMPERATURE_K)  # K
@@ -356,19 +376,182 @@ class PVReceiver:
         # Derived constants
         self.V_T = thermal_voltage(self.T)  # Thermal voltage (~26 mV at 300K)
         
+        # Physics Parameters for C_j(V)
+        self.V_bi = params.get('V_bi', 0.8) # Built-in potential (V)
+        self.grading_m = params.get('grading_m', 0.5) # Grading coefficient
+        
         # Verify physically reasonable values (relaxed for large-area solar cells)
         assert 0.3 <= self.R <= 0.8, "Responsivity should be 0.3-0.8 A/W for Si/GaAs"
         assert 1e-12 <= self.C_j <= 1000e-6, "Capacitance should be 1 pF - 1000 µF"
-        assert 1 <= self.R_sh <= 100e6, "Shunt resistance should be 1 Ω - 100 MΩ"
+        assert 1e3 <= self.R_sh <= 500e6, "Shunt resistance should be 1 kΩ - 500 MΩ"
         
-        print(f"[OK] PV Receiver initialized:")
+        print(f"[OK] PV Receiver initialized ({self.mode} mode):")
         print(f"    R = {self.R:.2f} A/W")
-        print(f"    C_j = {self.C_j*1e12:.1f} pF")
+        print(f"    C_j = {self.C_j*1e12:.1f} pF {self._mode_note}")
         print(f"    R_sh = {self.R_sh*1e-6:.1f} MOhm")
         print(f"    I_0 = {self.I_0*1e9:.1f} nA")
         print(f"    V_T = {self.V_T*1e3:.1f} mV (at {self.T}K)")
-        print(f"    C_j = {self.C_j*1e12:.1f} pF")
-        print(f"    DEBUG: Loaded from constants = {PHOTODIODE_JUNCTION_CAP_PF} pF")  # ADD THIS
+    
+    def calculate_bandwidth(self, R_load):
+        """
+        Calculate electrical 3dB bandwidth based on load resistance.
+        
+        Per Gonzalez-Uriarte 2024 reference:
+        f_c = 1 / (2π × R_load × C_eq)
+        
+        where C_eq is the equivalent capacitance (junction + parasitic).
+        
+        Measured data from Gonzalez Fig. 2:
+        | R_load | BW     |
+        |--------|--------|
+        | 1 MΩ   | 500 Hz |
+        | 10 kΩ  | 1 kHz  |
+        | 1 kΩ   | 10 kHz |
+        | 220 Ω  | 50 kHz |
+        
+        Args:
+            R_load (float): Load resistance in Ohms
+            
+        Returns:
+            f_3db (float): 3dB bandwidth in Hz
+        """
+        import numpy as np
+        
+        # Use parallel combination of R_sh and R_load
+        R_eq = (self.R_sh * R_load) / (self.R_sh + R_load) if R_load > 0 else self.R_sh
+        
+        # 3dB frequency: f_c = 1 / (2π × R × C)
+        f_3db = 1.0 / (2 * np.pi * R_eq * self.C_j)
+        
+        return f_3db
+    
+    def get_rload_bandwidth_curve(self, R_loads=None):
+        """
+        Generate R_load vs Bandwidth curve (for plotting/validation).
+        
+        Args:
+            R_loads (array): Load resistances in Ohms (optional)
+            
+        Returns:
+            dict: {'R_load': array, 'bandwidth_hz': array}
+        """
+        import numpy as np
+        
+        if R_loads is None:
+            R_loads = np.array([100, 220, 1e3, 10e3, 100e3, 1e6])
+        
+        bandwidths = np.array([self.calculate_bandwidth(r) for r in R_loads])
+        
+        return {'R_load': R_loads, 'bandwidth_hz': bandwidths}
+    
+    def get_voltage_vs_rload(self, I_ph_dc, R_loads=None):
+        """
+        Calculate output voltage vs load resistance (power-bandwidth trade-off).
+        
+        Higher R_load → Higher voltage but lower bandwidth.
+        
+        Args:
+            I_ph_dc (float): DC photocurrent in Amps
+            R_loads (array): Load resistances in Ohms
+            
+        Returns:
+            dict: {'R_load': array, 'voltage_v': array, 'bandwidth_hz': array}
+        """
+        import numpy as np
+        
+        if R_loads is None:
+            R_loads = np.array([100, 220, 1e3, 10e3, 100e3, 1e6])
+        
+        voltages = []
+        bandwidths = []
+        
+        for R_load in R_loads:
+            # Simple resistive divider approximation for small-signal voltage
+            R_eq = (self.R_sh * R_load) / (self.R_sh + R_load)
+            V_out = I_ph_dc * R_eq
+            voltages.append(V_out)
+            bandwidths.append(self.calculate_bandwidth(R_load))
+        
+        return {
+            'R_load': R_loads,
+            'voltage_v': np.array(voltages),
+            'bandwidth_hz': np.array(bandwidths)
+        }
+    
+    def set_temperature(self, T_kelvin):
+        """
+        Update the operating temperature dynamically.
+        
+        This affects:
+        - Thermal voltage: V_T = k_B × T / q
+        - Dark current increases with temperature
+        
+        Args:
+            T_kelvin (float): Temperature in Kelvin (typically 273-373 K)
+        """
+        from utils.constants import thermal_voltage
+        
+        assert 200 <= T_kelvin <= 500, "Temperature should be 200-500 K"
+        
+        self.T = T_kelvin
+        self.V_T = thermal_voltage(self.T)
+        
+        # Approximate dark current temperature dependence (doubles every ~10K)
+        T_ref = 300.0  # Reference at room temp
+        I0_ref = 1e-9  # 1 nA at reference
+        self.I_0 = I0_ref * (2 ** ((self.T - T_ref) / 10.0))
+    
+    def sweep_temperature(self, T_range_k=None, I_ph_dc=1e-6, R_load=1000):
+        """
+        Sweep temperature and calculate V_oc and I_sc characteristics.
+        
+        Per Kadirvelu paper: V_T = k_B × T / q affects PV cell performance.
+        
+        Args:
+            T_range_k (array): Temperature values in Kelvin
+            I_ph_dc (float): DC photocurrent (A)
+            R_load (float): Load resistance (Ohms)
+            
+        Returns:
+            dict: {'T_kelvin': array, 'V_T_mV': array, 'V_out_mV': array, 'I_0_nA': array}
+        """
+        import numpy as np
+        from utils.constants import thermal_voltage
+        
+        if T_range_k is None:
+            T_range_k = np.arange(273, 353, 10)  # 0°C to 80°C
+        
+        V_T_list = []
+        V_out_list = []
+        I_0_list = []
+        
+        # Save original state
+        T_orig = self.T
+        V_T_orig = self.V_T
+        I_0_orig = self.I_0
+        
+        for T in T_range_k:
+            self.set_temperature(T)
+            V_T_list.append(self.V_T * 1000)  # mV
+            I_0_list.append(self.I_0 * 1e9)   # nA
+            
+            # Approximate open-circuit voltage (simplified)
+            # V_oc ≈ V_T × ln(I_ph / I_0 + 1)
+            V_oc = self.V_T * np.log(I_ph_dc / self.I_0 + 1)
+            V_out_list.append(V_oc * 1000)  # mV
+        
+        # Restore original state
+        self.T = T_orig
+        self.V_T = V_T_orig
+        self.I_0 = I_0_orig
+        
+        return {
+            'T_kelvin': np.array(T_range_k),
+            'T_celsius': np.array(T_range_k) - 273.15,
+            'V_T_mV': np.array(V_T_list),
+            'V_oc_mV': np.array(V_out_list),
+            'I_0_nA': np.array(I_0_list)
+        }
 
     
     def optical_to_current(self, P_rx):
@@ -414,7 +597,49 @@ class PVReceiver:
         
         if method == 'euler':
             # ========== EULER INTEGRATION ==========
+            
+            # Pre-compute temperature profile if array
+            T_is_array = isinstance(self.T, (np.ndarray, list))
+            if T_is_array and len(self.T) != len(t):
+                 print(f"Warning: Temperature array length {len(self.T)} != time length {len(t)}. Using T[0].")
+                 T_current = self.T[0]
+                 T_is_array = False
+            elif not T_is_array:
+                 T_current = self.T
+
+            # Initial constants
+            V_T_current = thermal_voltage(T_current) if not T_is_array else thermal_voltage(self.T[0])
+            # Simple I_0 scaling: I_0(T) = I_0_ref * 2^((T-T_ref)/10)
+            I_0_ref = 1e-9 # approx base
+            T_ref = 300.0
+            
+            def get_I0(T_val):
+                 return I_0_ref * (2.0 ** ((T_val - T_ref) / 10.0))
+
+            I_0_current = get_I0(T_current) if not T_is_array else get_I0(self.T[0])
+
             for i in range(len(t) - 1):
+                # Update Physics if Temperature Changes
+                if T_is_array:
+                    T_val = self.T[i]
+                    V_T_current = thermal_voltage(T_val)
+                    I_0_current = get_I0(T_val)
+                
+                # Voltage Dependent Capacitance (Varicap)
+                # C_j(V) = C_j0 / (1 - V/V_bi)^m
+                # V_bi ~ 0.8V for Silicon, m ~ 0.5
+                V_bi = getattr(self, 'V_bi', 0.8)
+                grading_m = getattr(self, 'grading_m', 0.5)
+                
+                # Protect against singularity at V = V_bi
+                # And reverse bias limit
+                V_safe_C = np.clip(V[i], -10.0, V_bi - 0.05)
+                
+                # C_j0 is the zero-bias capacitance (stored in self.C_j)
+                # But actually self.C_j usually implies the average or 0V value.
+                # Let's assume self.C_j is C_j0.
+                C_j_dynamic = self.C_j / ((1 - V_safe_C/V_bi) ** grading_m)
+                
                 # Current balance (Kirchhoff's current law)
                 # I_ph = V/R_sh + C_j*dV/dt + I_diode + V/R_load
                 
@@ -428,23 +653,17 @@ class PVReceiver:
                 
                 # Diode leakage: I_diode = I_0 * (exp(V/V_T) - 1)
                 # For numerical stability, clip V_norm to avoid overflow
-                V_norm = V[i] / self.V_T
+                V_norm = V[i] / V_T_current
                 V_norm = np.clip(V_norm, -100, 100)  # Prevent overflow
-                I_diode = self.I_0 * (np.exp(V_norm) - 1)
+                I_diode = I_0_current * (np.exp(V_norm) - 1)
                 
                 # Differential equation: dV/dt = [I_ph - I_sh - I_diode - I_load] / C_j
-                dV_dt = (I_ph[i] - I_leak_sh - I_diode - I_load) / self.C_j
+                dV_dt = (I_ph[i] - I_leak_sh - I_diode - I_load) / C_j_dynamic
                 
                 # Euler step
                 V[i+1] = V[i] + dV_dt * dt
                 
                 # Safety: clip voltage to reasonable range (prevent explosion)
-                # But allow for Series Arrays (e.g. 5-10V)
-                # V[i+1] = np.clip(V[i+1], -0.1, 20.0) 
-                
-                # Ideally, physics prevents runaway. 
-                # If dV_dt is huge, reduced timestep needed.
-                # For now, just relax the clip.
                 V[i+1] = np.clip(V[i+1], -5.0, 50.0)
         
         elif method == 'rk45':

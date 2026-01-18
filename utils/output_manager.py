@@ -142,6 +142,190 @@ def reset_output():
     _current_output = None
 
 
+# =============================================================================
+# GENERAL SIMULATION OUTPUT MANAGEMENT
+# =============================================================================
+
+# Cache for general output directory
+_general_output_cache = None
+
+
+def get_general_output_dir(force_new: bool = True, base_dir: str = 'outputs') -> str:
+    """
+    Get output directory for general (non-paper) simulations.
+    
+    Creates a folder structure like:
+        outputs/general/Jan16_11pm_test1/
+        outputs/general/Jan16_11pm_test2/
+    
+    Args:
+        force_new: If True, always create a new testN folder.
+                   If False, reuse cached folder from this session.
+        base_dir: Base output directory (default: 'outputs')
+        
+    Returns:
+        Path to the test folder (e.g., 'outputs/general/Jan16_11pm_test1')
+    """
+    global _general_output_cache
+    
+    # Check cache (unless force_new)
+    if not force_new and _general_output_cache is not None:
+        return _general_output_cache
+    
+    # Build general folder path
+    general_folder = Path(base_dir) / 'general'
+    general_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Get timestamp and test number
+    timestamp = get_human_readable_timestamp()
+    test_num = get_test_number(str(general_folder), timestamp)
+    
+    test_folder = general_folder / f"{timestamp}_test{test_num}"
+    test_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Create run info
+    info_path = test_folder / 'run_info.txt'
+    with open(info_path, 'w') as f:
+        f.write(f"Li-Fi PV Simulator - General Simulation\n")
+        f.write(f"=======================================\n\n")
+        f.write(f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Folder: {test_folder.name}\n")
+    
+    # Cache it
+    _general_output_cache = str(test_folder)
+    
+    print(f"📁 Created general output: {test_folder}")
+    
+    return str(test_folder)
+
+
+def reset_general_output():
+    """Reset general output cache."""
+    global _general_output_cache
+    _general_output_cache = None
+
+
+# =============================================================================
+# PAPER-SPECIFIC OUTPUT MANAGEMENT
+# =============================================================================
+
+# Supported paper identifiers
+PAPER_NAMES = [
+    'correa_2025',
+    'kadirvelu_2021',
+    'xu_2024',
+    'gonzalez_2024',
+    'sarwar_2017',
+    'oliveira_2024',
+]
+
+# Cache for paper output directories (to avoid creating multiple folders per run)
+_paper_output_cache = {}
+
+
+def _get_next_test_number(paper_dir: Path) -> int:
+    """
+    Find the next available test number for a paper folder.
+    
+    Args:
+        paper_dir: Path to the paper folder (e.g., outputs/paper_correa_2025/)
+        
+    Returns:
+        Next test number (1 if no tests exist)
+    """
+    if not paper_dir.exists():
+        return 1
+    
+    existing = [d.name for d in paper_dir.iterdir() if d.is_dir()]
+    
+    # Find folders matching 'testN' pattern
+    test_nums = []
+    for folder in existing:
+        if folder.startswith('test') and folder[4:].isdigit():
+            test_nums.append(int(folder[4:]))
+    
+    return max(test_nums, default=0) + 1
+
+
+def _create_run_info(test_dir: Path, paper_name: str):
+    """
+    Create run_info.txt with timestamp and metadata.
+    
+    Args:
+        test_dir: Path to the test folder
+        paper_name: Paper identifier
+    """
+    info_path = test_dir / 'run_info.txt'
+    with open(info_path, 'w') as f:
+        f.write(f"Li-Fi PV Simulator - Paper Validation\n")
+        f.write(f"=====================================\n\n")
+        f.write(f"Paper: {paper_name}\n")
+        f.write(f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Folder: {test_dir.name}\n")
+
+
+def get_paper_output_dir(paper_name: str, force_new: bool = True, base_dir: str = 'outputs') -> str:
+    """
+    Get output directory for a specific paper validation.
+    
+    Creates a folder structure like:
+        outputs/paper_correa_2025/test1/
+        outputs/paper_correa_2025/test2/
+    
+    Args:
+        paper_name: Paper identifier (e.g., 'correa_2025', 'xu_2024')
+        force_new: If True, always create a new testN folder.
+                   If False, reuse cached folder from this session.
+        base_dir: Base output directory (default: 'outputs')
+        
+    Returns:
+        Path to the test folder (e.g., 'outputs/paper_correa_2025/test3')
+    """
+    global _paper_output_cache
+    
+    # Validate paper name
+    if paper_name not in PAPER_NAMES:
+        print(f"⚠️  Warning: '{paper_name}' not in PAPER_NAMES. Adding dynamically.")
+        PAPER_NAMES.append(paper_name)
+    
+    # Check cache (unless force_new)
+    if not force_new and paper_name in _paper_output_cache:
+        return _paper_output_cache[paper_name]
+    
+    # Build paper folder path
+    paper_folder = Path(base_dir) / f"paper_{paper_name}"
+    paper_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Get next test number
+    test_num = _get_next_test_number(paper_folder)
+    test_folder = paper_folder / f"test{test_num}"
+    test_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Create run info
+    _create_run_info(test_folder, paper_name)
+    
+    # Cache it
+    _paper_output_cache[paper_name] = str(test_folder)
+    
+    print(f"📁 Created paper output: {test_folder}")
+    
+    return str(test_folder)
+
+
+def reset_paper_output(paper_name: str = None):
+    """
+    Reset paper output cache.
+    
+    Args:
+        paper_name: Specific paper to reset, or None to reset all.
+    """
+    global _paper_output_cache
+    if paper_name is None:
+        _paper_output_cache = {}
+    elif paper_name in _paper_output_cache:
+        del _paper_output_cache[paper_name]
+
+
 # ========== TEST ==========
 
 if __name__ == "__main__":

@@ -1,0 +1,75 @@
+Gonzalez-Uriarte et al. (2024) — Validation Reference (Source of Truth)
+
+Paper metadata
+- Full title: Design and Implementation of a Low-Cost VLC Photovoltaic Panel-Based Receiver with off-the-Shelf Components
+- Authors: Agustín González-Uriarte, Cesar Azurdia, Diego Torreblanca, Pablo Palacios-Jativa, David Zabala-Blanco
+- Venue: 2024 IEEE Latin-American Conference on Communications (LATINCOM)
+- Date: November 2024
+- DOI: 10.1109/LATINCOM62985.2024.10770662
+
+Scope (what this reference validates)
+This document captures the parameter values and experimental results for validating a simulator against the "Gonzalez-Uriarte et al." system. The paper focuses on a low-cost, off-the-shelf implementation using a generic 5V/40mA PV panel and a microcontroller-based OOK transmitter, achieving 4.8 kBd.
+
+============================================================
+1) Key experimental conditions (Hardware & Geometry)
+============================================================
+Receiver Design
+- Solar Panel: "Generic 5V 40mA solar panel" (Small size, low cost).
+- Load Resistor: 220 Ω (Chosen to extend bandwidth to ~50 kHz).
+- Bandwidth-Enhancement Trade-off:
+  - Open circuit (High Z): Bandwidth ≈ 500 Hz.
+  - 10 kΩ load: Bandwidth ≈ 1 kHz.
+  - 220 Ω load: Bandwidth ≈ 50 kHz (Selected operating point).
+  - 11.6 Ω load: Bandwidth ≈ 300 kHz (but signal voltage becomes too low).
+- Filter: Twin-T Notch filter tuned to 100 Hz (to remove AC flicker from room lights).
+- Amplifier: Non-inverting amplifier followed by a Data Slicer.
+
+Transmitter
+- Source: White LED (generic 3W-5W range inferred from context).
+- Controller: ESP8266 (WeMos D1 Mini).
+- Modulation: On-Off Keying (OOK) - specifically UART serial data.
+
+Channel / Geometry
+- Distance: 60 cm (0.6 m).
+- Environment: Indoor office with artificial lighting (100 Hz flicker present).
+- Line of Sight (LOS): Yes.
+
+============================================================
+2) Measured Performance Targets (Headline Numbers)
+============================================================
+Data Rate
+- Max Baud Rate: 4.8 kBd (4800 bps)
+- At 9.6 kBd: BER becomes > 0 (Errors appear).
+
+Bandwidth vs. Load (Fig. 2)
+- 1 MΩ: BW ~ 500 Hz
+- 100 kΩ: BW ~ 500 Hz
+- 10 kΩ: BW ~ 1 kHz
+- 1 kΩ: BW ~ 10 kHz
+- 100 Ω: BW > 100 kHz (extrapolated from curve).
+- Validation Goal: Simulator must reproduce this "Load Resistance vs. Bandwidth" curve, showing the pole shift as R_load decreases (lowering the RC time constant).
+
+Voltage vs. Load (Fig. 3)
+- Validation Goal: As R_load decreases to increase bandwidth, the V_pp (signal amplitude) must drop linearly or per the divider rule. The simulator must show this trade-off (Gain vs. Bandwidth).
+
+============================================================
+3) Figure Targets & System Behaviors
+============================================================
+
+FIG. 7 — Oscilloscope Trace (Transmitter vs Receiver)
+Description: Comparison of the Tx signal (yellow) and Rx signal (blue) after processing.
+- Waveform: Square wave (UART bytes).
+- Quality: Sharp transitions at Rx, indicating the 220 Ω load + Data Slicer successfully reconstructed the edges.
+- Delay: Some propagation/processing delay visible.
+
+System Block Diagram (Fig. 5)
+- Chain: PV Panel -> 220Ω Load -> Notch Filter (100Hz) -> Non-Inv Amp -> Data Slicer -> MCU.
+- Validation Goal: Simulator should implement a "Notch Filter" block at 100 Hz and show that it removes 100 Hz interference while passing the 4.8 kHz data signal.
+
+============================================================
+4) Validation Notes
+============================================================
+- 100 Hz Flicker: A key specific validation point for this paper is the *rejection* of 100 Hz noise. If your simulator models ambient light flicker, this paper validates the notch filter's ability to clean it up.
+- Low-Cost Focus: Unlike the other papers using high-end GaAs cells or commercial optical tables, this uses <$5 parts. Parameters (Responsivity, Capacitance) should be set to "Generic Silicon" defaults if not specified (e.g., Cj ~ hundreds of nF, Rsh ~ low kΩ).
+
+End of validation reference.

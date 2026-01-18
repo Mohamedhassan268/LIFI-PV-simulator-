@@ -1,0 +1,116 @@
+Wang (De Oliveira Filho) et al. (2024) — Validation Reference (Source of Truth)
+
+Paper metadata
+- Full title: Reconfigurable MIMO-based self-powered battery-less light communication system
+- Authors: Jose Ilton De Oliveira Filho, Abderrahmen Trichili, Omar Alkhazragi, Mohamed-Slim Alouini, Boon S. Ooi, Khaled Nabil Salama
+- Venue: Light: Science & Applications (Nature Portfolio)
+- Volume/Issue/Date: Vol. 13, Article 218, 2024
+- DOI: 10.1038/s41377-024-01566-3
+
+Scope (what this reference validates)
+This document captures the parameter values, measurement conditions, figure targets, and analytical models for validating a MIMO / Reconfigurable SLIPT simulator. The paper focuses on a 3x3 Photodetector (PD) matrix that switches between Energy Harvesting (EH) and Information Decoding (ID).
+
+============================================================
+1) Key experimental conditions (Hardware & Geometry)
+============================================================
+Receiver A: "Large Area Panel" (Main focus for high power)
+- Array: 3x3 Matrix (9 PDs total)
+- PD Model: Luna Optoelectronics sd445-14-21-305 (Silicon)
+- Active Area per PD: 1.0 cm^2 (Total active area ~9.0 cm^2)
+- Package Area per PD: 2.24 cm^2
+
+Receiver B: "Small Area Panel" (Main focus for high speed)
+- Array: 3x3 Matrix
+- PD Model: Advanced Photonix PDB-C171SM
+- Active Area per PD: ~7.7 mm^2 (Total ~69.3 mm^2)
+
+Transmitters (TX)
+- Red Laser: Mitsubishi ML101J23 (658 nm)
+- Blue Laser: Osram PL-TB450B (450 nm)
+- Green LED: Kingbright APS5130PD7C-P22 (530 nm) - used as auxiliary/color-sensor source
+- Bias Tees: Picosecond Pulse Labs 5543-223
+
+Test Geometries
+- Artificial Light Bench: Distance d = 20 cm (0.2 m)
+- Light Source for EH: 60 W Incandescent Lamp (Reflector R80)
+
+============================================================
+2) Measured Performance Targets (Headline Numbers)
+============================================================
+Data Rate (Small PD Panel)
+- Configuration: SISO (Single PD active)
+- Modulation: OFDM-QAM (up to 64-QAM)
+- Gross Data Rate: 25.7 Mbps
+- Net Data Rate: 21.3 Mbps
+- BER: 3.4 x 10^-3 (Average)
+
+Data Rate (Large PD Panel)
+- Configuration: SISO
+- Gross Data Rate: 5.3 Mbps
+- Net Data Rate: 4.0 Mbps
+- BER: 3.3 x 10^-3 (Average)
+
+MIMO Performance (Aggregated)
+- Configuration: 4 Parallel Channels (Quadrant Mode)
+- Max Net Data Rate: 85.2 Mbps
+
+Energy Harvesting (Sunlight - Direct)
+- Max Power (P_max): 87.33 mW
+- Conditions: Standard AMT1.5 illumination (approx 1000 W/m^2 equivalent, measured in Lux)
+
+============================================================
+3) Figure Targets & Analytical Models
+============================================================
+
+FIG. 3 (c) — OFDM Performance Metrics (SISO, Small PD)
+Description: Subcarrier performance plots for the communication link.
+- X-axis: Subcarrier Index (1 to 500)
+- Y-axes:
+  1. Power Loading Factor (normalized power per subcarrier)
+  2. Spectral Efficiency (bits/s/Hz)
+  3. SNR (dB) — Typical range: 5 dB to ~25 dB
+  4. BER per subcarrier
+Validation Goal: Simulator should reproduce the SNR profile roll-off due to system bandwidth (approx 1.5 MHz usable BW stated in methods).
+
+FIG. 3 (d) — Constellation Diagram
+Description: 64-QAM constellation points.
+- Visual Target: Distinct grid of 64 clusters.
+- Error Vector Magnitude (EVM) implied by SNR.
+
+FIG. 4 (c) — MIMO/Quadrant Tracking (Drifting Beam)
+Description: SNR and BER as a laser beam physically drifts across the PD array (PD1 -> PD2 -> PD3 -> PD4).
+- Scenario: Quadrant II active for data.
+- Trend:
+  - As beam aligns with PD1: SNR peaks, BER minimizes.
+  - As beam moves to gap: SNR drops, BER spikes.
+  - As beam aligns with PD2: SNR peaks again.
+- Validation Goal: Verify spatial crosstalk/handoff modeling. Simulator should show sequential SNR peaks as the "beam spot" coordinates move across the 3x3 grid geometry.
+
+FIG. 5 (f) — Supercapacitor Charging Curve
+Description: Voltage vs. Time for a 0.1 F supercapacitor.
+- Source: Artificial light (60W lamp at 20 cm).
+- Ambient: 14 Lux (Dark room).
+- Curve 1 (Single PD Mode): Charges to full in ~32.2 min.
+- Curve 2 (No Active PD Mode): Charges to full in ~31.0 min.
+- Validation Goal: Simulate the harvesting current (I_harv) and verify charging time T = C * V / I_harv.
+
+Eq. (2) — Switching Circuit Transfer Function
+The paper provides an explicit transfer function A(w) for the switching matrix (used to model bandwidth loss):
+A(w)_dB = 10*log10[ (w^2 * (Ron*Cds)^2 + 1) ]
+          + 20*log10[ Rload / (Rload + Ron) ]
+          - 10*log10[ w^2 * ( (Rload/(Rload+Ron))^2 * (Cload + Cd + Cds)^2 ) + 1 ]
+
+Where:
+- Ron: Switch on-resistance
+- Cds: Drain-source capacitance
+- Cd: Drain-ground capacitance
+- Rload, Cload: TIA input impedance / PCB parasitics
+
+============================================================
+4) Validation Notes / Common Pitfalls
+============================================================
+- "Large" vs "Small" confusion: The 85.2 Mbps MIMO result is for the SMALL PDs (Cube). The LARGE panel only achieves ~5.3 Mbps. Ensure simulator parameters (Area, Capacitance) match the specific panel being simulated.
+- Bandwidth Limit: The system bandwidth is dominated by the PSoC/Switching matrix (approx 1 MHz 3dB BW) rather than the raw PD bandwidth. Simulator must include a low-pass filter pole representing the switch matrix.
+- Color: The paper uses "Color-based SLIPT". Red (625-750nm) is preferred for power (high responsivity). Green/Blue are used for data or signaling.
+
+End of validation reference.

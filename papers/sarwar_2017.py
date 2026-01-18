@@ -14,6 +14,7 @@ from simulator.transmitter import Transmitter
 from simulator.demodulator import Demodulator
 from simulator.receiver import PVReceiver
 from simulator.channel import OpticalChannel
+from utils.output_manager import get_paper_output_dir
 
 # Parameters approximating Sarwar et al. 2017
 # Note: Since they didn't provide physics specs, we use a "High-Bandwidth Silicon" model
@@ -39,8 +40,8 @@ PARAMS = {
 }
 
 def run_validation():
-    output_dir = "outputs/sarwar_2017"
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir = get_paper_output_dir('sarwar_2017')
+    # Folder already created by get_paper_output_dir
     
     print("="*60)
     print("VALIDATING SARWAR et al. (2017) - OFDM Benchmark")
@@ -136,3 +137,7 @@ def run_validation():
         print("❌ FAILURE: High BER (Check Signal Power / SNR).")
     
     return True
+
+
+if __name__ == "__main__":
+    run_validation()

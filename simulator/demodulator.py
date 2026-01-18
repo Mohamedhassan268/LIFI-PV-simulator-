@@ -9,15 +9,102 @@ Components:
 3. Matched filter / sampling
 4. Decision circuit
 5. BER calculation
+6. Physics-based BER prediction (Eb/N0 → BER)
 
 CHANGES FROM ORIGINAL:
 - Fixed inverted decision logic (< changed to >)
 - Updated default filter cutoffs
 - Reduced filter order from 4 to 2
+- Added predict_ber_ook for analytical BER computation
 """
 
 import numpy as np
 from scipy import signal
+from scipy.special import erfc
+
+
+# ========== PHYSICS-BASED BER PREDICTION ==========
+
+def predict_ber_ook(eb_n0_linear):
+    """
+    Predict BER from Eb/N0 for binary OOK/PWM-ASK over AWGN.
+    
+    Standard formula for coherent OOK with optimal threshold:
+        BER = 0.5 × erfc(√(Eb/N0 / 2))
+    
+    This is equivalent to BER = Q(√(Eb/N0)) where Q(x) = 0.5×erfc(x/√2).
+    
+    Args:
+        eb_n0_linear: Eb/N0 in linear scale (not dB)
+        
+    Returns:
+        BER: Bit Error Rate (0-1)
+    """
+    # Ensure non-negative
+    eb_n0_linear = np.maximum(eb_n0_linear, 1e-10)
+    return 0.5 * erfc(np.sqrt(eb_n0_linear / 2))
+
+
+def predict_ber_ook_db(eb_n0_db):
+    """
+    Predict BER from Eb/N0 in dB for binary OOK.
+    
+    Args:
+        eb_n0_db: Eb/N0 in dB
+        
+    Returns:
+        BER: Bit Error Rate (0-1)
+    """
+    eb_n0_linear = 10 ** (eb_n0_db / 10)
+    return predict_ber_ook(eb_n0_linear)
+
+
+def compute_eb_n0(P_rx, noise_psd, bit_rate, responsivity=0.5):
+    """
+    Compute Eb/N0 from system parameters.
+    
+    For optical OOK:
+        Eb = (R × P_rx)² / bit_rate   (Energy per bit from photocurrent)
+        N0 = noise_psd                 (Noise power spectral density in A²/Hz)
+    
+    Args:
+        P_rx: Received optical power (W)
+        noise_psd: Noise power spectral density (A²/Hz)
+        bit_rate: Data rate (bps)
+        responsivity: PV responsivity (A/W), default 0.5 for poly-Si
+        
+    Returns:
+        Eb/N0 in linear scale
+    """
+    # Signal current
+    I_signal = responsivity * P_rx
+    
+    # Energy per bit (signal power / bit rate)
+    # For OOK, average power is I²/2 (half on, half off)
+    signal_power = I_signal ** 2
+    Eb = signal_power / bit_rate
+    
+    # Noise spectral density
+    N0 = noise_psd
+    
+    # Avoid division by zero
+    if N0 == 0:
+        return 1e10  # Very high SNR
+    
+    return Eb / N0
+
+
+def snr_to_ber_lookup(snr_db_array):
+    """
+    Generate BER vs SNR lookup table for plotting.
+    
+    Args:
+        snr_db_array: Array of SNR values in dB
+        
+    Returns:
+        ber_array: Corresponding BER values
+    """
+    return predict_ber_ook_db(snr_db_array)
 
 
 class Demodulator:
@@ -166,33 +253,87 @@ class Demodulator:
         
         return bits_rx, threshold_used
     
-    def calculate_ber(self, bits_tx, bits_rx):
+    def calculate_ber(self, bits_tx, bits_rx, strict=False, mismatch_tolerance=0.1):
         """
-        Calculate Bit Error Rate.
+        Calculate Bit Error Rate with enhanced mismatch handling.
+        
+        Phase 7 Enhancement:
+        - strict mode: Raises exception if array lengths differ significantly
+        - mismatch_tolerance: Max allowed length difference as fraction (default 10%)
+        - sync_loss_rate: Reports missing/extra bits as separate metric
         
         Args:
             bits_tx (array): Transmitted bits
             bits_rx (array): Received bits
+            strict (bool): If True, raise exception on length mismatch > tolerance
+            mismatch_tolerance (float): Max allowed length difference (0-1)
         
         Returns:
-            dict: BER statistics
+            dict: BER statistics including:
+                - ber: Bit error rate (errors / compared_bits)
+                - errors: Number of bit errors
+                - total_bits: Number of bits compared
+                - accuracy: 1 - ber
+                - sync_loss_rate: Fraction of bits lost due to length mismatch
+                - length_mismatch: True if arrays were different lengths
         """
-        # Ensure same length
-        n = min(len(bits_tx), len(bits_rx))
-        bits_tx = bits_tx[:n]
-        bits_rx = bits_rx[:n]
+        len_tx = len(bits_tx)
+        len_rx = len(bits_rx)
+        
+        # Calculate mismatch
+        length_diff = abs(len_tx - len_rx)
+        max_len = max(len_tx, len_rx)
+        mismatch_fraction = length_diff / max_len if max_len > 0 else 0
+        
+        # Strict mode: raise exception if mismatch exceeds tolerance
+        if strict and mismatch_fraction > mismatch_tolerance:
+            raise ValueError(
+                f"BER length mismatch too large: TX={len_tx}, RX={len_rx} "
+                f"({mismatch_fraction*100:.1f}% > {mismatch_tolerance*100:.0f}% tolerance). "
+                f"Check synchronization or use strict=False."
+            )
+        
+        # Warn on any mismatch
+        if length_diff > 0:
+            print(f"WARNING: BER array length mismatch: TX={len_tx}, RX={len_rx} "
+                  f"(using min={min(len_tx, len_rx)} bits)")
+        
+        # Use minimum length for comparison
+        n = min(len_tx, len_rx)
+        
+        if n == 0:
+            return {
+                'ber': 1.0,
+                'errors': 0,
+                'total_bits': 0,
+                'accuracy': 0.0,
+                'sync_loss_rate': 1.0,
+                'length_mismatch': True,
+                'bits_tx_len': len_tx,
+                'bits_rx_len': len_rx,
+            }
+        
+        bits_tx_trunc = bits_tx[:n]
+        bits_rx_trunc = bits_rx[:n]
         
         # Count errors
-        errors = np.sum(bits_tx != bits_rx)
+        errors = np.sum(bits_tx_trunc != bits_rx_trunc)
         
         # Calculate BER
-        ber = errors / n if n > 0 else 1.0
+        ber = errors / n
+        
+        # Sync loss rate: fraction of bits that couldn't be compared
+        sync_loss_rate = length_diff / max_len if max_len > 0 else 0
         
         return {
             'ber': ber,
-            'errors': errors,
+            'errors': int(errors),
             'total_bits': n,
             'accuracy': 1 - ber,
+            'sync_loss_rate': sync_loss_rate,
+            'length_mismatch': length_diff > 0,
+            'bits_tx_len': len_tx,
+            'bits_rx_len': len_rx,
         }
     
     def decode_manchester(self, signal_in, n_bits, sps):

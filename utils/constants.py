@@ -22,10 +22,13 @@ LED_BEAM_HALF_ANGLE_DEG = 9  # LED half-power angle (degrees)
 LED_WAVELENGTH_NM = 650  # Red LED wavelength (nm)
 
 # ========== PHOTODIODE/RECEIVER PARAMETERS ==========
-PHOTODIODE_RESPONSIVITY_A_PER_W = 0.457  # A/W (Si @ 650nm)
+PHOTODIODE_RESPONSIVITY_A_PER_W = 0.457  # A/W (GaAs @ 650nm)
 PHOTODIODE_DARK_CURRENT_NA = 1.0  # Dark current (nA)
-PHOTODIODE_JUNCTION_CAP_PF = 798  # Junction capacitance (pF) - CRITICAL!
-PHOTODIODE_SHUNT_RESISTANCE_MOHM = 0.1388  # Shunt resistance (MΩ)
+
+# CRITICAL: GaAs solar cells have VERY HIGH shunt resistance (~100 MΩ)
+# and moderate junction capacitance (~800 pF)
+PHOTODIODE_JUNCTION_CAP_PF = 798       # Junction capacitance (pF)
+PHOTODIODE_SHUNT_RESISTANCE_MOHM = 138.8  # Shunt resistance (MΩ) = 138.8e6 Ω
 
 # ========== CHANNEL PARAMETERS ==========
 RX_AREA_CM2 = 9.0  # Receiver photodiode area (cm²)
@@ -50,13 +53,14 @@ PAPER_VALIDATION_CONFIG = {
     # Current-sense receiver chain
     'rsense_ohm': 1.0,                # Current-sense resistor (Ω)
     'ina_gain': 100,                  # INA gain (40 dB)
-    'bpf_low_hz': 700,                # BPF lower cutoff (Hz)
+    'bpf_low_hz': 75,                 # BPF lower cutoff (Hz) - per reference: 1/(2π×33k×64nF)
     'bpf_high_hz': 10000,             # BPF upper cutoff (Hz)
     'bpf_order': 2,                   # 2nd order Butterworth
     
     # Small-signal circuit parameters (from paper analysis)
-    'rsh_ohm': 138800.0,              # Shunt resistance (Ω) -> 138.8 kΩ
-    'cj_pf': 798000.0,                # Junction capacitance (pF) -> 798 nF
+    # CRITICAL: R_sh = 138.8 MΩ (very high for GaAs), C_j = 798 pF
+    'rsh_ohm': 138.8e6,               # Shunt resistance = 138.8 MΩ in Ohms
+    'cj_f': 798e-12,                  # Junction capacitance = 798 pF in Farads
     'cload_uf': 10,                   # Load capacitance (µF)
     'rload_ohm': 1360,                # Load resistance ~1.36 kΩ
 }

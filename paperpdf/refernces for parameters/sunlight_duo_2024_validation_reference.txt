@@ -1,0 +1,100 @@
+Xu et al. (2024) — Validation Reference (Source of Truth)
+
+Paper metadata
+- Full title: Sunlight-Duo: Exploiting Sunlight for Simultaneous Energy Harvesting & Communication
+- Authors: Talia Xu, Mirco Muttillo, Miguel Chavez Tapia, Patrizio Manganiello, Harald Haas, Marco Zuniga Zamalloa
+- Venue: EWSN '24: Proceedings of the 2024 International Conference on Embedded Wireless Systems and Networks
+- Date: October 2024
+- Pages: 254–265
+
+Scope (what this reference validates)
+This document captures the parameter values, measurement conditions, figure targets, and system behaviors for validating a simulator against the "Sunlight-Duo" system. The paper focuses on using sunlight (modulated by an LC shutter or sunlight collector) as the *sole* source for both energy harvesting (EH) and information decoding (ID), without artificial LED/Laser transmitters.
+
+============================================================
+1) Key experimental conditions (Hardware & Geometry)
+============================================================
+Receiver Design
+- Solar Cell Model: Anysolar KXOB25-14X1F (Monocrystalline Silicon)
+- Total Array Area: 3000 mm^2 (30 cm^2)
+- Number of Cells: 16 cells total
+- Configurations Tested:
+  - 2s-8p (2 series, 8 parallel groups) - "Parallel-heavy"
+  - 4s-4p (4 series, 4 parallel groups) - "Mixed"
+  - 8s-2p (8 series, 2 parallel groups) - "Series-heavy" (Final Design Choice)
+- Energy Storage: 0.47 F Supercapacitor (instead of battery)
+- Charger IC: BQ25570 (uses Constant Voltage MPPT algorithm)
+
+Transmitter (Optical Modulator)
+- Device: Liquid Crystal (LC) Shutter (PI-cell)
+- Rise/Fall Time: ~1.34 ms / 0.15 ms (approx 3 ms full transition)
+- Modulation: Binary Frequency Shift Keying (BFSK)
+  - Logic '0': 1600 Hz
+  - Logic '1': 2000 Hz
+- Data Rate: 400 bps (standard), up to 1200 bps (short range)
+
+Light Sources / Interference
+- "Controlled" Setup: LED array (100 W) acts as sunlight interference; Flashlight acts as signal.
+- "Outdoor" Setup: Himawari sunlight collector (fiber optic output) + Real sunlight.
+- Interference Levels: 3 klux to 50 klux tested.
+
+============================================================
+2) Measured Performance Targets (Headline Numbers)
+============================================================
+Link Performance (Outdoor, 11m Range)
+- Downlink Data Rate: 1200 bps (Max stable), 400 bps (Standard)
+- Uplink Data Rate: 800 bps (Max stable)
+- Packet Success Rate (PSR): >90% at 11m (with collimating lens)
+- Range without lens: ~4m (PSR > 85%)
+
+Energy Harvesting
+- Stable operation window: 9:00 AM to 7:00 PM
+- Load support: Powers microcontroller, 3 sensors (Temp, Humidity, Light), and E-ink display.
+- Supercap Voltage: Maintains > 1.8V (operational threshold) throughout the day.
+
+============================================================
+3) Figure Targets & System Behaviors
+============================================================
+
+FIG. 5 — Pre-charging Stage Performance (Pareto Frontier)
+Description: Charging speed vs. Communication signal strength (normalized).
+- Conditions: Supercap voltage < 1.8V (MPPT not active).
+- Trend:
+  - Parallel (2s-8p): Best for communication signal strength.
+  - Mixed (4s-4p): Best compromise for charging at medium light (10 klux).
+- Validation Goal: Simulator should show that no single configuration is optimal for all light levels in passive mode.
+
+FIG. 6 — Charging Stage Performance (MPPT Active)
+Description: Effect of MPPT operating point (eta_voc) on Communication vs. Charging.
+- Parameter: eta_voc (Ratio of V_operate to Open Circuit Voltage).
+- Curves:
+  - eta_voc = 80%: High charging efficiency (~100%), Low communication efficiency (<40%).
+  - eta_voc = 10%: Low charging efficiency, High communication efficiency.
+- Pareto Frontier (Fig. 6e): The "Series" connection (8s-2p) with varying eta_voc covers the optimal trade-off curve.
+- Validation Goal: Verify that deviating from MPP (eta_voc=80%) to lower voltages (eta_voc=50% or 30%) improves signal detection magnitude at the cost of harvested power.
+
+FIG. 9 — Comparison with State-of-the-Art (SoA)
+Description: Supercap voltage and BER under strong light (50 klux).
+- SoA approach (switching 2s-8p/8s-2p at eta=80%): Fails (Voltage drops to 1V, BER > 40%).
+- Sunlight-Duo approach (8s-2p fixed, dynamic eta): Succeeds (Voltage ~4V, BER near 0%).
+- Validation Goal: Demonstrate that standard MPPT algorithms (fixed at 80% Voc) kill the communication signal in high interference.
+
+FIG. 12 (b) — Packet Success Rate vs. Distance (with Lens)
+Description: PSR for Downlink (DL) and Uplink (UL).
+- X-axis: Distance (m) up to 11m.
+- Y-axis: Packet Success Rate (%).
+- Data Rate: 400 bps.
+- Target: Both DL and UL stay > 90% PSR up to 11m.
+
+FIG. 13 — Link Stability over Time
+Description: 30-minute window of packet success rate under variable clouds.
+- Conditions: Light varying 10-18 klux.
+- Target: Link remains stable (Green/Yellow zones) except during total sun blockage.
+
+============================================================
+4) Validation Notes / Common Pitfalls
+============================================================
+- Dual-Purpose Conflict: The core physics to simulate is that *maximizing power* (operating at MPP) *minimizes* the AC signal amplitude (communication quality) because the IV curve is flat near MPP. The simulator must capture this trade-off.
+- Modulation Frequencies: The system uses BFSK (1.6/2.0 kHz). Simulator must handle these specific frequencies, not just OOK.
+- LC Response Time: The liquid crystal imposes a ~3ms slew rate. Simulator must model this low-pass filtering effect on the transmitted waveform.
+
+End of validation reference.

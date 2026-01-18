@@ -1,0 +1,139 @@
+Kadirvelu et al. (2021) — Validation Reference (Source of Truth)
+
+Paper metadata
+- Full title: A Circuit for Simultaneous Reception of Data and Power Using a Solar Cell
+- Authors: Sindhubala Kadirvelu; Walter D. Leon-Salas; Xiaozhe Fan; Jongseok Kim; Borja Peleato; Saeed Mohammadi; B. Vijayalakshmi
+- Venue: IEEE Transactions on Green Communications and Networking (TGCN)
+- Volume/Issue/Date: Vol. 5, No. 4, December 2021
+- DOI: 10.1109/TGCN.2021.3087008
+
+Scope (what this reference validates)
+This document captures the parameter values, measurement conditions, figure targets, and the paper-provided analytical / fitted models used to validate a simulator against Kadirvelu et al. (2021).
+
+============================================================
+1) Key experimental conditions reported in the paper
+============================================================
+Optical link / geometry (frequency-response & BER/harvesting measurements section)
+- Distance r: 32.5 cm (0.325 m)
+- LED radiated power (for reported results): 9.3 mW
+- LED: LUXEON Rebel (LXM5-PD01) red LED with Fraen 9° lens (85% transmittance)
+- Solar cell: High-efficiency GaAs solar cell from Alta Devices
+- Solar cell area A: 5 cm × 1.8 cm = 9.0 cm^2
+- Solar-cell responsivity used for modeling: Rx = 0.457 A/W
+
+Reported headline outcomes (from abstract / results)
+- Harvested power: 223 µW at r = 32.5 cm and radiated power = 9.3 mW
+- Example BER point: at modulation depth m = 50% and transmission speed 2.5 kbps, BER = 1.008×10^-3
+
+============================================================
+2) Solar-cell small-signal parameters used in paper analysis
+============================================================
+(These are the values used for the analytical frequency-response plots and related discussion.)
+- Shunt resistance: Rsh = 138.8 Ω
+- Junction capacitance: Cj = 798 nF
+- Load resistor (chosen equal to Rmpp in the analysis): Rload = 1.36 kΩ
+- Load capacitor: Cload = 10 µF
+
+============================================================
+3) Receiver & circuit blocks (paper implementation)
+============================================================
+Receiver architecture (Fig. 11)
+- Current-sense resistor: Rsense = 1 Ω (chosen as a trade-off between bandwidth and harvesting efficiency)
+- Instrumentation amplifier: INA322
+- Active band-pass filter: 2nd-order, implemented as two cascaded stages
+- Comparator: TLV7011
+- Op-amps used in filter stages: TLV379 (as used for the filter modeling appendix)
+
+Band-pass filter component values (from the test setup schematic)
+- Each stage: R = 33 kΩ, C_lowpass = 482 pF, C_highpass = 64 nF
+- Approximate cutoff frequencies implied by these values:
+  - High-pass cutoff: fL ≈ 1/(2π·33k·64nF) ≈ 75 Hz
+  - Low-pass cutoff:  fH ≈ 1/(2π·33k·482pF) ≈ 10 kHz
+
+End-to-end small-signal frequency response model used in the paper
+- Ubp/Umod = Go · Hsense · Hina · Hbp   (paper Eq. (19))
+
+============================================================
+4) Figure targets & paper-provided models
+============================================================
+FIG. 13 — Frequency response (modelled vs measured)
+What the paper states to validate
+- Frequency response is measured by sweeping the LED-driver modulating input (Vmod) and observing the band-pass output (Vbp).
+- The modelled and measured frequency responses agree fairly well, supporting the validity of the analytical model.
+Paper model reference
+- Ubp/Umod = Go · Hsense · Hina · Hbp  (Eq. (19))
+
+FIG. 14 — Power Spectral Density (PSD) / Noise Performance
+Description
+- PSD measured at the output of the band-pass filter (AC coupled).
+- Measurement Conditions: fsw = 50 kHz, constant illumination.
+- Comparison: Measured with filter capacitors vs. without filter capacitors to demonstrate noise rejection.
+Quantitative Targets (RMS Noise)
+- With filter capacitors: 7.769 mVrms
+- Without filter capacitors: 15.892 mVrms
+Conclusion
+- The filter is effective at removing switching and ambient noise (approx. 50% reduction in RMS noise).
+
+FIG. 15 — DC-DC converter output voltage vs duty cycle (measured)
+What the paper states to validate
+- Vout is measured vs duty cycle for multiple switching frequencies (fsw = 50 kHz, 100 kHz, 200 kHz).
+- Lower fsw results in higher Vout and higher delivered load power.
+Additional quantitative targets explicitly stated
+- DC-DC conversion efficiency (max delivered / max generated):
+  - 67% at fsw = 50 kHz
+  - 56.4% at fsw = 100 kHz
+  - 42% at fsw = 200 kHz
+
+FIG. 16 — Measured Transient Waveforms
+Description
+- Oscilloscope capture of the signal chain during data transmission.
+- Shows the reconstruction of the digital signal from the modulated light.
+Signals Displayed
+- Vmod: Modulating input to LED driver (Transmitted signal).
+- Vbp: Band-pass filter output (AC coupled, amplified analog signal).
+- Vcmp: Comparator output (Recovered digital signal).
+Conditions
+- Encoding: Manchester code (Logic 1 = Low-to-High; Logic 0 = High-to-Low).
+- Data Pattern: Pseudo-random bit sequence (PRBS).
+- Modulation Depth: 33% (Bit amplitude stated as 40 mV).
+Validation Goal
+- Verify that Vcmp correctly follows the transitions in Vmod (checking for bit flips or timing errors).
+
+FIG. 17 — BER vs modulation depth (measured)
+Panels
+- (a) Tbit = 100 µs (10 kbps)
+- (b) Tbit = 400 µs (2.5 kbps)
+What the paper states to validate
+- BER is reduced as fsw increases, attributed to the band-pass filter’s action on switching noise.
+Explicit example operating points stated in text
+- For Tbit = 100 µs, fsw = 200 kHz, m = 33%: BER = 5.066×10^-2
+- For Tbit = 400 µs, same conditions: BER = 3.445×10^-3
+- For Tbit = 400 µs and m = 50%: BER = 1.008×10^-3
+
+FIG. 18 — DC-DC Vout vs modulation depth (measured)
+What the paper states to validate
+- As modulation depth increases, the average transmitted optical power decreases, and the DC-DC average output voltage decreases.
+- Increasing fsw also reduces Vout (consistent with the efficiency trend in Fig. 15).
+
+FIG. 19 — Max harvested power vs bit rate (measured trade-off)
+What the paper states to validate
+- Trade-off curve built by measuring Pout,max while varying fsw from 10 kHz to 300 kHz.
+- The paper provides a fitted model (Eq. (20)):
+  Pout,max = p1·(log10(bit_rate))^2 + p2·log10(bit_rate) + p3
+  with:
+  - p1 = 7.972×10^-5
+  - p2 = 5.171×10^-4
+  - p3 = 5.826×10^-4
+  Notes:
+  - Pout,max is in watts (W) in this equation.
+  - bit_rate is in bps for the log10() term (as written in the paper).
+
+============================================================
+5) Validation notes (common mismatches to fix)
+============================================================
+- Venue mismatch: this paper is in IEEE Transactions on Green Communications and Networking (not IEEE Transactions on Industrial Electronics).
+- Units mismatch to avoid:
+  - Rsh is 138.8 Ω (not 138.8 kΩ).
+  - Cj is 798 nF (not 798 pF).
+
+End of validation reference.
