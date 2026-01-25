@@ -307,7 +307,7 @@ def get_paper_output_dir(paper_name: str, force_new: bool = True, base_dir: str 
     # Cache it
     _paper_output_cache[paper_name] = str(test_folder)
     
-    print(f"📁 Created paper output: {test_folder}")
+    print(f"[+] Created paper output: {test_folder}")
     
     return str(test_folder)
 
