@@ -64,7 +64,7 @@ LAYER 3: RECEIVER (PV CELL) ARGUMENTS
     - c-si: Standard crystalline silicon
              R=0.42 A/W, C=300pF, Rsh=100kΩ
     - high-speed: Low capacitance for OFDM (Sarwar 15 Mbps)
-             R=0.6 A/W, C=100pF, Rsh=1MΩ
+             R=0.6 A/W, C=100pF, Rsh=2kΩ
     - custom: User-defined parameters
 
 --rx-responsivity <value>

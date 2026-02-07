@@ -27,8 +27,8 @@ PHOTODIODE_DARK_CURRENT_NA = 1.0  # Dark current (nA)
 
 # CRITICAL: GaAs solar cells have VERY HIGH shunt resistance (~100 MΩ)
 # and moderate junction capacitance (~800 pF)
-PHOTODIODE_JUNCTION_CAP_PF = 798       # Junction capacitance (pF)
-PHOTODIODE_SHUNT_RESISTANCE_MOHM = 138.8  # Shunt resistance (MΩ) = 138.8e6 Ω
+PHOTODIODE_JUNCTION_CAP_PF = 798000       # Junction capacitance (pF)
+PHOTODIODE_SHUNT_RESISTANCE_MOHM = 0.1388  # Shunt resistance (MΩ) = 138.8 kΩ (Matches Kadirvelu paper)
 
 # ========== CHANNEL PARAMETERS ==========
 RX_AREA_CM2 = 9.0  # Receiver photodiode area (cm²)
@@ -58,8 +58,8 @@ PAPER_VALIDATION_CONFIG = {
     'bpf_order': 2,                   # 2nd order Butterworth
     
     # Small-signal circuit parameters (from paper analysis)
-    # CRITICAL: R_sh = 138.8 MΩ (very high for GaAs), C_j = 798 pF
-    'rsh_ohm': 138.8e6,               # Shunt resistance = 138.8 MΩ in Ohms
+    # CRITICAL: R_sh = 138.8 kΩ (Corrected from MΩ), C_j = 798 pF
+    'rsh_ohm': 138.8e3,               # Shunt resistance = 138,800 Ω
     'cj_f': 798e-12,                  # Junction capacitance = 798 pF in Farads
     'cload_uf': 10,                   # Load capacitance (µF)
     'rload_ohm': 1360,                # Load resistance ~1.36 kΩ

@@ -1,6 +1,3 @@
-"""
-Validation Papers Module
-
-Each file in this directory represents a specific research paper validation.
-They must expose a `run_validation()` function.
-"""
+# papers/
+# Paper-specific presets, runners, and validation plots.
+# Each sub-package contains one paper's locked parameters and orchestration.

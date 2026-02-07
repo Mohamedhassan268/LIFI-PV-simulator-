@@ -12,7 +12,8 @@ Paper efficiency values:
 """
 
 import numpy as np
-
+from scipy.optimize import fsolve
+from scipy import optimize
 
 class DCDCConverter:
     """
@@ -28,6 +29,87 @@ class DCDCConverter:
         100: 0.564,  # 56.4% at 100 kHz
         200: 0.42,   # 42% at 200 kHz
     }
+    def solve_operating_point(self, pv_params, R_load, duty_cycle=None, fsw_khz=None):
+        """
+        Finds the actual steady-state voltage (V_pv) where the PV source 
+        and DC-DC converter demand intersect.
+        
+        Solves: I_supply(V) = I_demand(V)
+        
+        Args:
+            pv_params (dict): PV cell parameters (I_ph, I_0, n, T, etc.)
+            R_load (float): Output load resistance in Ohms
+            duty_cycle (float): Duty cycle (0-1)
+            fsw_khz (float): Switching frequency
+            
+        Returns:
+            tuple: (V_pv_operating, I_pv_operating)
+        """
+        if duty_cycle is None:
+            duty_cycle = self.duty_cycle
+        if fsw_khz is None:
+            fsw_khz = self.fsw_khz
+            
+        # 1. Get Efficiency for this operating point
+        eta = self.get_efficiency(fsw_khz)
+        
+        # 2. Define the Demand Curve (Input Current of Boost Converter)
+        # Power Balance: P_in * eta = P_out
+        # V * I_in * eta = (V_out^2) / R_load
+        # Substitite V_out = V / (1-D):
+        # I_in = V / (eta * (1-D)^2 * R_load)
+        def get_demand_current(V):
+            if V < 1e-6: return 0
+            denom = eta * ((1 - duty_cycle) ** 2) * R_load
+            return V / denom
+
+        # 3. Define the Supply Curve (PV Single Diode Model)
+        # I_pv = I_ph - I_0 * (exp(V / (n * V_t)) - 1) - V / R_sh
+        # (We unpack the params dict here)
+        I_ph = pv_params['I_ph']
+        I_0 = pv_params['I_0']
+        n = pv_params.get('n', 1.0) # Ideality factor
+        T = pv_params.get('T', 300) # Temp in Kelvin
+        R_sh = pv_params.get('R_sh', 1e6) # Shunt resistance
+        
+        # Thermal Voltage V_t = k*T/q
+        q = 1.602e-19
+        k = 1.38e-23
+        V_t = (k * T) / q * n # Include 'n' in V_t for simplicity
+
+        def get_supply_current(V):
+            # Safe exp to avoid overflow
+            try:
+                exp_term = np.exp(V / V_t) - 1
+            except OverflowError:
+                exp_term = 1e12 # Cap at huge number
+            
+            return I_ph - I_0 * exp_term - (V / R_sh)
+
+        # 4. Define the Target Function (Difference between Supply and Demand)
+        # We want to find V where: Supply - Demand = 0
+        def error_func(V):
+            return get_supply_current(V) - get_demand_current(V)
+
+        # 5. Solve for V (Root Finding)
+        # Bracket: Voltage is between 0 and Open Circuit Voltage (approx 0.7V for single cell)
+        # Note: If this is a module, V_oc will be higher (e.g. 13 * 0.7)
+        V_guess_max = 10.0 # Upper bound safety
+        
+        try:
+            # Brent's method is robust for this
+            V_op = optimize.brentq(error_func, 0.0, V_guess_max)
+        except ValueError:
+            # If root finding fails, assume collapsed source (0V) or V_oc
+            # Check signs at bounds
+            if error_func(0) * error_func(V_guess_max) > 0:
+                 # No intersection? Likely demand >> supply -> V crashes to 0
+                 V_op = 0.01 
+            else:
+                 V_op = 0.0
+
+        I_op = get_supply_current(V_op)
+        return V_op, I_op
     
     def __init__(self, params=None):
         """
@@ -107,6 +189,83 @@ class DCDCConverter:
         
         return 1.0 / (1.0 - duty_cycle)
     
+    def solve_operating_point(self, pv_params, R_load, duty_cycle=None, fsw_khz=None):
+        """
+        Find the operating point (V_pv, I_pv) where PV source matches Converter input.
+        
+        Args:
+            pv_params (dict): PV cell parameters (I_ph, I_0, n, T, R_sh)
+            R_load (float): Load resistance at converter output
+            duty_cycle (float): Duty cycle
+            fsw_khz (float): Switching frequency
+            
+        Returns:
+            tuple: (V_pv_op, I_pv_op)
+        """
+        if duty_cycle is None:
+            duty_cycle = self.duty_cycle
+        if fsw_khz is None:
+            fsw_khz = self.fsw_khz
+            
+        # Unpack PV params
+        I_ph = pv_params.get('I_ph', 0.025)
+        I_0 = pv_params.get('I_0', 1e-9)
+        n = pv_params.get('n', 1.5)
+        T = pv_params.get('T', 300)
+        R_sh = pv_params.get('R_sh', 1000)
+        # Thermal voltage
+        k = 1.380649e-23
+        q = 1.60217663e-19
+        V_T = n * k * T / q
+        
+        # PV Current Equation
+        def get_pv_current(V):
+            # Simplified single diode model (ignoring Rs for stability or assuming it's small/included)
+            # I = I_ph - I_0 * (exp(V/V_T) - 1) - V/R_sh
+            # Ensure V is not too large to prevent overflow
+            try:
+                term_diode = I_0 * (np.exp(np.clip(V/V_T, -50, 50)) - 1)
+                return I_ph - term_diode - V/R_sh
+            except:
+                return 0.0
+
+        # Converter Input Current Equation (Power Balance)
+        def get_converter_current(V):
+            if V <= 0.01: return 0.0 # Avoid singularity
+            
+            # 1. Calculate PV current at this voltage (guess)
+            I_guess = get_pv_current(V)
+            
+            # 2. Calculate Output Voltage for this (V, I)
+            out = self.calculate_output(V, I_guess, duty_cycle, fsw_khz)
+            V_out = out['V_out']
+            eta = out['efficiency']
+            
+            # 3. Calculate Input Current required to sustain V_out across R_load
+            # P_out = V_out^2 / R_load
+            # P_in = P_out / eta
+            # I_in = P_in / V
+            if eta <= 0: return 0.0
+            
+            P_out = (V_out**2) / R_load
+            P_in = P_out / eta
+            I_in = P_in / V
+            return I_in
+
+        # Objective function: Difference between Supply and Demand
+        def objective(V):
+            return get_pv_current(V) - get_converter_current(V)
+        
+        # Solve for V_pv
+        # Initial guess: Open circuit voltage approx (0.6V - 1.0V)
+        V_guess = 0.5
+        V_sol = fsolve(objective, V_guess)[0]
+        
+        # Calculate corresponding current
+        I_sol = get_pv_current(V_sol)
+        
+        return V_sol, I_sol
+
     def calculate_output(self, V_pv, I_pv, duty_cycle=None, fsw_khz=None, L_uH=100):
         """
         Calculate converter output voltage and power.

@@ -16,9 +16,16 @@ Physics Models Used:
 - SNR → BER mapping via Q-function
 """
 
+import os
+import sys
+
+# Add project root to sys.path to allow imports from simulator package
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 from simulator.receiver import PVReceiver
 from simulator.transmitter import Transmitter
 from simulator.channel import OpticalChannel
@@ -351,7 +358,7 @@ def validate_frequency_response():
     # Setup Receiver
     rx = PVReceiver({
         'responsivity': PARAMS['responsivity'],
-        'shunt_resistance': 0.001,  # Assume Rsh >> Rload
+        'shunt_resistance': 100.0,  # Assume Rsh >> Rload (100 MΩ)
         'capacitance': PARAMS['c_eq_nf'] * 1e3,  # nF -> pF
         'dark_current': 1e-9,
     })

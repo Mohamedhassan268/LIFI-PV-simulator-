@@ -12,6 +12,11 @@ Equation 8: PV Cell RC Circuit (ODE)
   dV/dt = [I_ph - V/R_sh - I_0*exp(V/V_T)] / C_j
 
 This is a first-order nonlinear ODE solved with Euler integration.
+
+UPDATES:
+- Added notch filter for mains rejection (González 2024)
+- Fixed series cell voltage scaling in ODE solver
+- Improved n_cells handling throughout
 """
 
 import numpy as np
@@ -137,7 +142,48 @@ class PVReceiver:
         V_ina = signal.lfilter(b, a, V_ideal)
         
         return V_ina
-
+    
+    def apply_notch_filter(self, signal_in, t, f_notch=100, Q=30):
+        """
+        Apply notch filter for mains interference rejection (González 2024).
+        
+        Used to reject 50/60/100 Hz power line interference that couples
+        into the receiver through electromagnetic interference.
+        
+        Per González 2024 Fig. 3: Notch at 100 Hz (2nd harmonic of 50 Hz mains)
+        
+        Args:
+            signal_in (ndarray): Input signal (V)
+            t (ndarray): Time vector (s)
+            f_notch (float): Notch frequency in Hz (default 100 Hz for 2nd harmonic)
+            Q (float): Quality factor - higher Q = narrower notch (default 30)
+            
+        Returns:
+            signal_out (ndarray): Filtered signal (V)
+        """
+        from scipy.signal import iirnotch, filtfilt
+        
+        dt = np.mean(np.diff(t))
+        fs = 1.0 / dt
+        
+        # Check if notch frequency is valid
+        if f_notch >= fs / 2:
+            print(f"WARNING: Notch frequency {f_notch} Hz >= Nyquist {fs/2:.1f} Hz, skipping")
+            return signal_in
+        
+        try:
+            # Design IIR notch filter
+            b, a = iirnotch(f_notch, Q, fs)
+            
+            # Apply zero-phase filtering
+            signal_out = filtfilt(b, a, signal_in)
+            
+        except Exception as e:
+            print(f"WARNING: Notch filter failed ({e}), returning unfiltered signal")
+            signal_out = signal_in
+        
+        return signal_out
+    
     def apply_bpf_physics(self, signal_in, t, Rhp, Chp, Rlp, Clp):
         """
         Apply Band-Pass Filter based on physical component values.
@@ -286,12 +332,15 @@ class PVReceiver:
         return signal_out
     
     def paper_receiver_chain(self, I_ph, t, R_sense=1.0, ina_gain=100, 
-                             f_low=700, f_high=10000, bpf_order=2, verbose=False):
+                             f_low=700, f_high=10000, bpf_order=2, 
+                             apply_notch=False, f_notch=100, verbose=False):
         """
-        Complete paper-mode receiver chain: Rsense → INA → BPF.
+        Complete paper-mode receiver chain: Rsense → INA → [Notch] → BPF.
         
         This implements the Kadirvelu et al. 2021 receiver architecture
         for simultaneous data and power reception.
+        
+        González 2024 adds optional notch filter before BPF.
         
         Args:
             I_ph (ndarray): Photocurrent (A)
@@ -301,10 +350,12 @@ class PVReceiver:
             f_low (float): BPF lower cutoff (Hz)
             f_high (float): BPF upper cutoff (Hz)
             bpf_order (int): BPF filter order
+            apply_notch (bool): Enable notch filter (González 2024)
+            f_notch (float): Notch frequency (Hz), default 100 Hz
             verbose (bool): Print debug info
             
         Returns:
-            dict: Contains V_sense, V_ina, V_bp (filtered output)
+            dict: Contains V_sense, V_ina, [V_notch], V_bp (filtered output)
         """
         # Step 1: Current-sense resistor
         V_sense = self.apply_current_sense(I_ph, R_sense)
@@ -312,23 +363,37 @@ class PVReceiver:
         # Step 2: INA amplification
         V_ina = self.apply_ina_gain(V_sense, ina_gain)
         
-        # Step 3: Bandpass filter
-        V_bp = self.apply_bandpass_filter(V_ina, t, f_low, f_high, bpf_order)
+        # Step 3: Optional notch filter (González 2024)
+        result = {
+            'V_sense': V_sense,
+            'V_ina': V_ina,
+        }
+        
+        if apply_notch:
+            V_notch = self.apply_notch_filter(V_ina, t, f_notch=f_notch)
+            result['V_notch'] = V_notch
+            V_bp_input = V_notch
+        else:
+            V_bp_input = V_ina
+        
+        # Step 4: Bandpass filter
+        V_bp = self.apply_bandpass_filter(V_bp_input, t, f_low, f_high, bpf_order)
+        result['V_bp'] = V_bp
         
         if verbose:
             print(f"\n  Paper Receiver Chain:")
             print(f"    R_sense = {R_sense} Ω")
             print(f"    INA gain = {ina_gain}× ({20*np.log10(ina_gain):.0f} dB)")
+            if apply_notch:
+                print(f"    Notch: {f_notch} Hz (Q=30)")
             print(f"    BPF: {f_low} Hz – {f_high} Hz (order {bpf_order})")
             print(f"    V_sense: {V_sense.min()*1e6:.2f} to {V_sense.max()*1e6:.2f} µV")
             print(f"    V_ina: {V_ina.min()*1e3:.2f} to {V_ina.max()*1e3:.2f} mV")
+            if apply_notch:
+                print(f"    V_notch: {V_notch.min()*1e3:.2f} to {V_notch.max()*1e3:.2f} mV")
             print(f"    V_bp: {V_bp.min()*1e3:.2f} to {V_bp.max()*1e3:.2f} mV")
         
-        return {
-            'V_sense': V_sense,
-            'V_ina': V_ina,
-            'V_bp': V_bp,
-        }
+        return result
     
     def __init__(self, params=None):
         """
@@ -342,6 +407,7 @@ class PVReceiver:
                 - 'dark_current': I_0 (nA)
                 - 'temperature': T (K)
                 - 'mode': 'photovoltaic' (default) or 'photoconductive'
+                - 'n_cells': Number of series cells (default 1)
         """
         
         if params is None:
@@ -354,6 +420,9 @@ class PVReceiver:
         
         # Physical parameters
         self.R = params.get('responsivity', PHOTODIODE_RESPONSIVITY_A_PER_W)  # A/W
+        
+        # Number of series cells (CRITICAL for multi-cell modules)
+        self.n_cells = params.get('n_cells', 1)
         
         # Base capacitance (before mode adjustment)
         base_capacitance_pf = params.get('capacitance', PHOTODIODE_JUNCTION_CAP_PF)
@@ -377,8 +446,9 @@ class PVReceiver:
         self.V_T = thermal_voltage(self.T)  # Thermal voltage (~26 mV at 300K)
         
         # Physics Parameters for C_j(V)
-        self.V_bi = params.get('V_bi', 0.8) # Built-in potential (V)
-        self.grading_m = params.get('grading_m', 0.5) # Grading coefficient
+        # FIXED: V_bi scales with series cells
+        self.V_bi = params.get('V_bi', 0.8) * self.n_cells  # Built-in potential scales
+        self.grading_m = params.get('grading_m', 0.5)  # Grading coefficient
         
         # Verify physically reasonable values (relaxed for large-area solar cells)
         assert 0.3 <= self.R <= 0.8, "Responsivity should be 0.3-0.8 A/W for Si/GaAs"
@@ -391,6 +461,8 @@ class PVReceiver:
         print(f"    R_sh = {self.R_sh*1e-6:.1f} MOhm")
         print(f"    I_0 = {self.I_0*1e9:.1f} nA")
         print(f"    V_T = {self.V_T*1e3:.1f} mV (at {self.T}K)")
+        if self.n_cells > 1:
+            print(f"    n_cells = {self.n_cells} (V_bi = {self.V_bi:.2f} V)")
     
     def calculate_bandwidth(self, R_load):
         """
@@ -573,12 +645,11 @@ class PVReceiver:
     
     def solve_pv_circuit(self, I_ph, t, R_load=None, method='euler', verbose=False):
         """
-        Solve PV cell RC circuit ODE.
+        Solve PV cell RC circuit ODE with proper series cell handling.
         
-        Equation 8: dV/dt = [I_ph(t) - V/R_sh - I_0*exp(V/V_T) - V/R_load] / C_j
+        Equation 8: dV/dt = [I_ph(t) - V/R_sh - I_0*exp(V/(n*V_T)) - V/R_load] / C_j
         
-        This is a first-order nonlinear ODE.
-        We use simple Euler integration for clarity.
+        FIXED: For n_cells > 1, diode equation uses V/(n_cells * V_T) scaling
         
         Args:
             I_ph (array): Photocurrent (Amperes)
@@ -627,17 +698,15 @@ class PVReceiver:
                 
                 # Voltage Dependent Capacitance (Varicap)
                 # C_j(V) = C_j0 / (1 - V/V_bi)^m
-                # V_bi ~ 0.8V for Silicon, m ~ 0.5
-                V_bi = getattr(self, 'V_bi', 0.8)
-                grading_m = getattr(self, 'grading_m', 0.5)
+                # FIXED: V_bi already scaled by n_cells in __init__
+                V_bi = self.V_bi
+                grading_m = self.grading_m
                 
                 # Protect against singularity at V = V_bi
                 # And reverse bias limit
                 V_safe_C = np.clip(V[i], -10.0, V_bi - 0.05)
                 
                 # C_j0 is the zero-bias capacitance (stored in self.C_j)
-                # But actually self.C_j usually implies the average or 0V value.
-                # Let's assume self.C_j is C_j0.
                 C_j_dynamic = self.C_j / ((1 - V_safe_C/V_bi) ** grading_m)
                 
                 # Current balance (Kirchhoff's current law)
@@ -651,9 +720,10 @@ class PVReceiver:
                 if R_load is not None and R_load > 0:
                     I_load = V[i] / R_load
                 
-                # Diode leakage: I_diode = I_0 * (exp(V/V_T) - 1)
+                # Diode leakage: I_diode = I_0 * (exp(V/(n*V_T)) - 1)
+                # FIXED: Proper series cell scaling
                 # For numerical stability, clip V_norm to avoid overflow
-                V_norm = V[i] / V_T_current
+                V_norm = V[i] / (V_T_current * self.n_cells)
                 V_norm = np.clip(V_norm, -100, 100)  # Prevent overflow
                 I_diode = I_0_current * (np.exp(V_norm) - 1)
                 
@@ -664,7 +734,9 @@ class PVReceiver:
                 V[i+1] = V[i] + dV_dt * dt
                 
                 # Safety: clip voltage to reasonable range (prevent explosion)
-                V[i+1] = np.clip(V[i+1], -5.0, 50.0)
+                # FIXED: Allow higher voltage for multi-cell modules
+                V_max = 5.0 * self.n_cells  # ~5V per cell maximum
+                V[i+1] = np.clip(V[i+1], -5.0, V_max)
         
         elif method == 'rk45':
             # Optional: use scipy RK45 for better accuracy
@@ -681,6 +753,8 @@ class PVReceiver:
             print(f"  V_min: {V.min()*1e3:.2f} mV")
             print(f"  V_max: {V.max()*1e3:.2f} mV")
             print(f"  V_final: {V[-1]*1e3:.2f} mV")
+            if self.n_cells > 1:
+                print(f"  V_per_cell: {V[-1]/self.n_cells*1e3:.2f} mV")
             print(f"  Steady-state reached: {np.abs(V[-1] - V[-2]) < 1e-4}")
         
         return V
@@ -689,7 +763,9 @@ class PVReceiver:
         """
         Estimate open-circuit voltage (no load current).
         
-        V_oc ~ V_T * ln(I_ph / I_0)
+        V_oc ~ n * V_T * ln(I_ph / I_0)
+        
+        FIXED: Properly accounts for series cells
         
         Args:
             I_ph_avg (float): Average photocurrent (Amperes)
@@ -701,7 +777,8 @@ class PVReceiver:
         if I_ph_avg <= 0:
             return 0.0
         
-        V_oc = self.V_T * np.log(I_ph_avg / self.I_0)
+        # For series cells, V_oc scales proportionally
+        V_oc = self.n_cells * self.V_T * np.log(I_ph_avg / self.I_0)
         
         return V_oc
 
@@ -893,26 +970,19 @@ class ReconfigurablePVArray:
         else:
             # COMMUNICATION MODE (Resistive Load)
             # Standard PV solver but with scaled parameters
-            # Use base_cell.solve_pv_circuit but with scaled inputs?
-            # Or simplified V=IR solution?
-            # Let's use the explicit ODE solver from PVReceiver but modify it
-            # Or instantiate a temporary "Super PV" and solve.
             
             # Scaled "Super PV" params
             super_params = self.cell_params.copy()
-            super_params['dark_current'] = I_0_arr
-            super_params['temperature'] = self.base_cell.T # V_T handled by solver logic if we hack it
-            
-            # Actually, easiest way:
-            # The solver uses self.V_T and self.I_0.
-            # We can create a temporary PVReceiver with the scaled properties.
-            # V_T needs to be overridden.
+            super_params['dark_current'] = I_0_arr * 1e9  # Convert back to nA
+            super_params['temperature'] = self.base_cell.T
+            super_params['n_cells'] = N_s  # CRITICAL: Tell solver about series cells
             
             super_pv = PVReceiver(super_params)
-            super_pv.V_T = V_T_arr # Override thermal voltage scalar
+            super_pv.V_T = V_T_arr / N_s  # Keep single-cell V_T, n_cells handles scaling
             super_pv.I_0 = I_0_arr
             # C_j scaling: Parallel adds, Series divides
             super_pv.C_j = self.base_cell.C_j * (N_p / N_s) 
+            super_pv.n_cells = N_s  # Ensure n_cells is set
             
             V_out = super_pv.solve_pv_circuit(I_ph_array, t, R_load=R_load_comm)
             I_out = V_out / R_load_comm

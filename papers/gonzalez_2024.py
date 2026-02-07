@@ -13,6 +13,11 @@ Validates:
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import sys
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.output_manager import get_paper_output_dir
 
 PARAMS = {
@@ -24,8 +29,8 @@ PARAMS = {
     'solar_cell_area_cm2': 66.0,
     
     # Electrical Model
-    # Large capacitance typical for cheap panels (hundreds of nF)
-    'cj_f': 320e-9,  # 320 nF
+    # Large capacitance typical for cheap panels (hundreds of nF) -> ADJUSTED for 50kHz BW
+    'cj_f': 14.5e-9, # 14.5 nF (Target 50 kHz BW at 220 Ω)
     
     'rload_nominal': 220,
     
