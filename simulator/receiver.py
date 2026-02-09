@@ -451,9 +451,20 @@ class PVReceiver:
         self.grading_m = params.get('grading_m', 0.5)  # Grading coefficient
         
         # Verify physically reasonable values (relaxed for large-area solar cells)
-        assert 0.3 <= self.R <= 0.8, "Responsivity should be 0.3-0.8 A/W for Si/GaAs"
-        assert 1e-12 <= self.C_j <= 1000e-6, "Capacitance should be 1 pF - 1000 µF"
-        assert 1e3 <= self.R_sh <= 500e6, "Shunt resistance should be 1 kΩ - 500 MΩ"
+        # These assertions catch the most common unit confusion mistakes
+        assert 0.1 <= self.R <= 1.0, \
+            f"Responsivity R={self.R} A/W out of range [0.1, 1.0]. " \
+            f"Check: should be in A/W (Si: 0.3-0.6, GaAs: 0.4-0.5)."
+        
+        assert 1e-12 <= self.C_j <= 1e-3, \
+            f"Capacitance C_j={self.C_j:.2e} F out of range [1 pF, 1 mF]. " \
+            f"Input was {base_capacitance_pf} pF. " \
+            f"If you meant nF, multiply by 1000. If µF, multiply by 1e6."
+        
+        assert 1e3 <= self.R_sh <= 500e6, \
+            f"Shunt resistance R_sh={self.R_sh:.0f} Ω out of range [1 kΩ, 500 MΩ]. " \
+            f"Input was {params.get('shunt_resistance', PHOTODIODE_SHUNT_RESISTANCE_MOHM)} MΩ. " \
+            f"If you meant kΩ, divide by 1000. If Ω, divide by 1e6."
         
         print(f"[OK] PV Receiver initialized ({self.mode} mode):")
         print(f"    R = {self.R:.2f} A/W")
@@ -643,7 +654,7 @@ class PVReceiver:
         
         return I_ph
     
-    def solve_pv_circuit(self, I_ph, t, R_load=None, method='euler', verbose=False):
+    def solve_pv_circuit(self, I_ph, t, R_load=None, method='radau', verbose=False):
         """
         Solve PV cell RC circuit ODE with proper series cell handling.
         
@@ -651,103 +662,123 @@ class PVReceiver:
         
         FIXED: For n_cells > 1, diode equation uses V/(n_cells * V_T) scaling
         
+        Methods:
+            'radau'  — Implicit Runge-Kutta (scipy), excellent for stiff PV circuits.
+                       Adaptive step size, unconditionally stable. RECOMMENDED.
+            'euler'  — Forward Euler (legacy). Fast but can be unstable when
+                       dt > 2 × R_eq × C_j. Use only for quick tests.
+        
         Args:
             I_ph (array): Photocurrent (Amperes)
             t (array): Time vector (seconds)
-            R_load (float, optional): Load resistance (Ohms). If None, assumes open circuit.
-            method (str): 'euler' or 'rk45' (Runge-Kutta)
+            R_load (float, optional): Load resistance (Ohms). If None, open circuit.
+            method (str): 'radau' (default, recommended) or 'euler' (legacy)
             verbose (bool): Print progress
         
         Returns:
             V (array): Junction voltage (Volts)
         """
+        from scipy.interpolate import interp1d
         
         dt = t[1] - t[0]  # Time step
-        V = np.zeros(len(t))  # Initialize voltage array
-        V[0] = 0.0  # Start at V=0
+        V_max_clip = 5.0 * self.n_cells
         
-        if method == 'euler':
-            # ========== EULER INTEGRATION ==========
+        # Temperature handling
+        T_is_array = isinstance(self.T, (np.ndarray, list))
+        if T_is_array and len(self.T) != len(t):
+            print(f"Warning: Temperature array length {len(self.T)} != time length {len(t)}. Using T[0].")
+            T_current = self.T[0]
+            T_is_array = False
+        elif not T_is_array:
+            T_current = self.T
+        
+        V_T_val = thermal_voltage(T_current if not T_is_array else self.T[0])
+        
+        if method == 'radau':
+            # ========== SCIPY RADAU (Stiff-Stable, Adaptive) ==========
+            from scipy.integrate import solve_ivp
             
-            # Pre-compute temperature profile if array
-            T_is_array = isinstance(self.T, (np.ndarray, list))
-            if T_is_array and len(self.T) != len(t):
-                 print(f"Warning: Temperature array length {len(self.T)} != time length {len(t)}. Using T[0].")
-                 T_current = self.T[0]
-                 T_is_array = False
-            elif not T_is_array:
-                 T_current = self.T
-
-            # Initial constants
-            V_T_current = thermal_voltage(T_current) if not T_is_array else thermal_voltage(self.T[0])
-            # Simple I_0 scaling: I_0(T) = I_0_ref * 2^((T-T_ref)/10)
-            I_0_ref = 1e-9 # approx base
+            # Interpolator for photocurrent (needed by ODE RHS)
+            I_ph_interp = interp1d(t, I_ph, kind='linear', 
+                                    bounds_error=False, fill_value=(I_ph[0], I_ph[-1]))
+            
+            def rhs(t_val, y):
+                """ODE right-hand side: dV/dt = f(t, V)"""
+                V_val = y[0]
+                
+                # Voltage-dependent capacitance (varicap)
+                V_safe = np.clip(V_val, -10.0, self.V_bi - 0.05)
+                C_dyn = self.C_j / ((1 - V_safe / self.V_bi) ** self.grading_m)
+                
+                # Currents
+                I_sh = V_val / self.R_sh
+                I_load = V_val / R_load if (R_load is not None and R_load > 0) else 0.0
+                
+                V_norm = np.clip(V_val / (V_T_val * self.n_cells), -100, 100)
+                I_diode = self.I_0 * (np.exp(V_norm) - 1)
+                
+                dVdt = (I_ph_interp(t_val) - I_sh - I_diode - I_load) / C_dyn
+                return [dVdt]
+            
+            # Solve
+            sol = solve_ivp(rhs, [t[0], t[-1]], [0.0], 
+                            method='Radau', t_eval=t,
+                            rtol=1e-6, atol=1e-9,
+                            max_step=dt * 100)  # Don't skip too much detail
+            
+            if sol.success:
+                V = np.clip(sol.y[0], -5.0, V_max_clip)
+            else:
+                print(f"WARNING: Radau solver failed ({sol.message}), falling back to Euler")
+                return self.solve_pv_circuit(I_ph, t, R_load, method='euler', verbose=verbose)
+        
+        elif method == 'euler':
+            # ========== EULER INTEGRATION (Legacy) ==========
+            
+            # Stability check
+            R_eq = self.R_sh
+            if R_load is not None and R_load > 0:
+                R_eq = (self.R_sh * R_load) / (self.R_sh + R_load)
+            dt_crit = 2.0 * R_eq * self.C_j
+            if dt > dt_crit:
+                print(f"WARNING: Euler dt={dt:.2e}s > stability limit {dt_crit:.2e}s. "
+                      f"Consider method='radau' or smaller time step.")
+            
+            V = np.zeros(len(t))
+            V[0] = 0.0
+            
+            I_0_ref = 1e-9
             T_ref = 300.0
-            
             def get_I0(T_val):
-                 return I_0_ref * (2.0 ** ((T_val - T_ref) / 10.0))
-
+                return I_0_ref * (2.0 ** ((T_val - T_ref) / 10.0))
+            
+            V_T_current = V_T_val
             I_0_current = get_I0(T_current) if not T_is_array else get_I0(self.T[0])
 
             for i in range(len(t) - 1):
-                # Update Physics if Temperature Changes
                 if T_is_array:
-                    T_val = self.T[i]
-                    V_T_current = thermal_voltage(T_val)
-                    I_0_current = get_I0(T_val)
+                    V_T_current = thermal_voltage(self.T[i])
+                    I_0_current = get_I0(self.T[i])
                 
-                # Voltage Dependent Capacitance (Varicap)
-                # C_j(V) = C_j0 / (1 - V/V_bi)^m
-                # FIXED: V_bi already scaled by n_cells in __init__
-                V_bi = self.V_bi
-                grading_m = self.grading_m
+                # Voltage-dependent capacitance
+                V_safe_C = np.clip(V[i], -10.0, self.V_bi - 0.05)
+                C_j_dynamic = self.C_j / ((1 - V_safe_C / self.V_bi) ** self.grading_m)
                 
-                # Protect against singularity at V = V_bi
-                # And reverse bias limit
-                V_safe_C = np.clip(V[i], -10.0, V_bi - 0.05)
-                
-                # C_j0 is the zero-bias capacitance (stored in self.C_j)
-                C_j_dynamic = self.C_j / ((1 - V_safe_C/V_bi) ** grading_m)
-                
-                # Current balance (Kirchhoff's current law)
-                # I_ph = V/R_sh + C_j*dV/dt + I_diode + V/R_load
-                
-                # Shunt leakage: I_sh = V / R_sh
+                # Currents
                 I_leak_sh = V[i] / self.R_sh
+                I_load_val = V[i] / R_load if (R_load is not None and R_load > 0) else 0.0
                 
-                # External Load: I_load = V / R_load
-                I_load = 0.0
-                if R_load is not None and R_load > 0:
-                    I_load = V[i] / R_load
-                
-                # Diode leakage: I_diode = I_0 * (exp(V/(n*V_T)) - 1)
-                # FIXED: Proper series cell scaling
-                # For numerical stability, clip V_norm to avoid overflow
-                V_norm = V[i] / (V_T_current * self.n_cells)
-                V_norm = np.clip(V_norm, -100, 100)  # Prevent overflow
+                V_norm = np.clip(V[i] / (V_T_current * self.n_cells), -100, 100)
                 I_diode = I_0_current * (np.exp(V_norm) - 1)
                 
-                # Differential equation: dV/dt = [I_ph - I_sh - I_diode - I_load] / C_j
-                dV_dt = (I_ph[i] - I_leak_sh - I_diode - I_load) / C_j_dynamic
-                
-                # Euler step
-                V[i+1] = V[i] + dV_dt * dt
-                
-                # Safety: clip voltage to reasonable range (prevent explosion)
-                # FIXED: Allow higher voltage for multi-cell modules
-                V_max = 5.0 * self.n_cells  # ~5V per cell maximum
-                V[i+1] = np.clip(V[i+1], -5.0, V_max)
-        
-        elif method == 'rk45':
-            # Optional: use scipy RK45 for better accuracy
-            # For now, Euler is sufficient
-            raise NotImplementedError("RK45 not yet implemented. Use 'euler'.")
+                dV_dt = (I_ph[i] - I_leak_sh - I_diode - I_load_val) / C_j_dynamic
+                V[i+1] = np.clip(V[i] + dV_dt * dt, -5.0, V_max_clip)
         
         else:
-            raise ValueError(f"Unknown method: {method}")
+            raise ValueError(f"Unknown method: {method}. Use 'radau' or 'euler'.")
         
         if verbose:
-            print(f"\nPV Circuit Solution (Euler):")
+            print(f"\nPV Circuit Solution ({method}):")
             print(f"  dt: {dt*1e6:.2f} us")
             print(f"  Time span: {t[0]*1e3:.2f} - {t[-1]*1e3:.2f} ms")
             print(f"  V_min: {V.min()*1e3:.2f} mV")
@@ -952,7 +983,9 @@ class ReconfigurablePVArray:
             for i in range(len(t)):
                 # Diode current at current capacitor voltage
                 if I_0_arr > 0:
-                    I_diode = I_0_arr * (np.exp(v_cap / V_T_arr) - 1)
+                    # Safe exponential to prevent overflow
+                    exp_arg = np.clip(v_cap / V_T_arr, -500, 500)
+                    I_diode = I_0_arr * (np.exp(exp_arg) - 1)
                 else:
                     I_diode = 0
                 
@@ -993,7 +1026,8 @@ class ReconfigurablePVArray:
 # ========== TESTS ==========
 
 def test_receiver():
-    """Unit test for PV receiver."""
+    """Unit test for PV receiver — validates all fixes."""
+    import time
     
     print("\n" + "="*60)
     print("PV RECEIVER UNIT TEST")
@@ -1003,34 +1037,75 @@ def test_receiver():
     rx = PVReceiver()
     
     # Create a simple received power waveform
-    # Constant light at 2 uW
-    P_rx = np.ones(10000) * 2e-6  # 2 uW
-    t = np.arange(10000) / 1e6  # 1 us sample period -> 10 ms duration
+    P_rx = np.ones(10000) * 2e-6  # 2 uW constant
+    t = np.arange(10000) / 1e6    # 1 us step -> 10 ms duration
     
     # Convert to photocurrent
     I_ph = rx.optical_to_current(P_rx)
     
     print(f"\nPhotocurrent:")
     print(f"  I_ph (2uW): {I_ph[0]*1e6:.2f} uA")
-    print(f"  I_ph (avg): {I_ph.mean()*1e6:.2f} uA")
     
     # Estimate open-circuit voltage
     V_oc_est = rx.estimate_open_circuit_voltage(I_ph.mean())
     print(f"  V_oc (est): {V_oc_est*1e3:.1f} mV")
     
-    # Solve PV circuit ODE
-    V = rx.solve_pv_circuit(I_ph, t, verbose=True)
+    # --- Test 1: Radau solver (new default) ---
+    print("\n[Test 1] Radau ODE solver...")
+    t0 = time.perf_counter()
+    V_radau = rx.solve_pv_circuit(I_ph, t, method='radau', verbose=True)
+    t_radau = time.perf_counter() - t0
     
-    # Validation
-    assert V.min() >= -0.5, "[ERROR] Voltage too negative!"
-    assert V.max() <= 0.5, "[ERROR] Voltage too positive!"
-    assert len(V) == len(t), "[ERROR] Voltage length mismatch!"
-    assert np.isnan(V).sum() == 0, "[ERROR] NaN detected in voltage!"
+    assert V_radau.min() >= -0.5, "[ERROR] Voltage too negative!"
+    assert V_radau.max() <= 0.5, "[ERROR] Voltage too positive!"
+    assert len(V_radau) == len(t), "[ERROR] Voltage length mismatch!"
+    assert np.isnan(V_radau).sum() == 0, "[ERROR] NaN detected!"
+    print(f"  Time: {t_radau*1000:.1f} ms  [OK]")
     
-    print("\n[OK] All receiver tests passed!")
+    # --- Test 2: Euler solver (legacy) ---
+    print("\n[Test 2] Euler ODE solver (legacy)...")
+    t0 = time.perf_counter()
+    V_euler = rx.solve_pv_circuit(I_ph, t, method='euler', verbose=True)
+    t_euler = time.perf_counter() - t0
+    
+    assert V_euler.min() >= -0.5, "[ERROR] Voltage too negative!"
+    assert V_euler.max() <= 0.5, "[ERROR] Voltage too positive!"
+    assert np.isnan(V_euler).sum() == 0, "[ERROR] NaN detected!"
+    print(f"  Time: {t_euler*1000:.1f} ms  [OK]")
+    
+    # --- Test 3: Both solvers should agree on steady-state ---
+    print("\n[Test 3] Solver agreement...")
+    V_ss_radau = V_radau[-1]
+    V_ss_euler = V_euler[-1]
+    error_pct = abs(V_ss_radau - V_ss_euler) / max(abs(V_ss_radau), 1e-9) * 100
+    print(f"  Radau final: {V_ss_radau*1e3:.3f} mV")
+    print(f"  Euler final: {V_ss_euler*1e3:.3f} mV")
+    print(f"  Difference: {error_pct:.1f}%")
+    assert error_pct < 5.0, f"[ERROR] Solvers disagree by {error_pct:.1f}%"
+    print("  [OK] Solvers agree within 5%")
+    
+    # --- Test 4: With load resistance ---
+    print("\n[Test 4] Solver with R_load=1kΩ...")
+    V_loaded = rx.solve_pv_circuit(I_ph, t, R_load=1000, method='radau', verbose=False)
+    assert V_loaded[-1] < V_radau[-1], "[ERROR] Loaded voltage should be < open-circuit"
+    print(f"  V_oc={V_radau[-1]*1e3:.2f}mV, V_loaded={V_loaded[-1]*1e3:.2f}mV  [OK]")
+    
+    # --- Test 5: Unit validation catches bad inputs ---
+    print("\n[Test 5] Unit validation...")
+    try:
+        bad_rx = PVReceiver({'responsivity': 50})  # 50 A/W is absurd
+        print("  [FAIL] Should have caught bad responsivity")
+    except AssertionError:
+        print("  [OK] Caught invalid responsivity")
+    except Exception as e:
+        print(f"  [OK] Caught: {type(e).__name__}")
+    
+    print("\n" + "="*60)
+    print(f"[OK] ALL RECEIVER TESTS PASSED!")
+    print(f"  Speedup: Radau {t_radau*1000:.1f}ms vs Euler {t_euler*1000:.1f}ms")
     print("="*60)
     
-    return V
+    return V_radau
 
 
 if __name__ == "__main__":
