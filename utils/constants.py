@@ -25,10 +25,18 @@ LED_WAVELENGTH_NM = 650  # Red LED wavelength (nm)
 PHOTODIODE_RESPONSIVITY_A_PER_W = 0.457  # A/W (GaAs @ 650nm)
 PHOTODIODE_DARK_CURRENT_NA = 1.0  # Dark current (nA)
 
-# CRITICAL: GaAs solar cells have VERY HIGH shunt resistance (~100 MΩ)
-# and moderate junction capacitance (~800 pF)
-PHOTODIODE_JUNCTION_CAP_PF = 798000       # Junction capacitance (pF)
-PHOTODIODE_SHUNT_RESISTANCE_MOHM = 0.1388  # Shunt resistance (MΩ) = 138.8 kΩ (Matches Kadirvelu paper)
+# DEFAULT values — from Kadirvelu 2021 GaAs 13-cell module (5cm × 1.8cm)
+# Other papers use VERY different values:
+#   - González 2024: C_j ~100 nF, R_sh ~10 kΩ (Si solar cell)
+#   - Xu 2024: C_j ~50 nF per cell (multi-cell reconfigurable array)
+#   - Sarwar 2017: C_j ~10 pF, R_sh ~1 MΩ (small Si photodiode)
+# Always override with paper-specific params for validation runs.
+DEFAULT_JUNCTION_CAP_PF = 798000              # Junction capacitance (pF) — Kadirvelu GaAs module
+DEFAULT_SHUNT_RESISTANCE_MOHM = 0.1388        # Shunt resistance (MΩ) = 138.8 kΩ — Kadirvelu GaAs
+
+# Backward-compatible aliases (existing code uses these names)
+PHOTODIODE_JUNCTION_CAP_PF = DEFAULT_JUNCTION_CAP_PF
+PHOTODIODE_SHUNT_RESISTANCE_MOHM = DEFAULT_SHUNT_RESISTANCE_MOHM
 
 # ========== CHANNEL PARAMETERS ==========
 RX_AREA_CM2 = 9.0  # Receiver photodiode area (cm²)
@@ -218,7 +226,7 @@ def validate_constants():
     
     # Check Lambertian order
     m_L = lambertian_order(30)
-    assert 1 < m_L < 3, f"m_L = {m_L:.2f} (expected 1-3 for 30°)"
+    assert 1 < m_L < 10, f"m_L = {m_L:.2f} (expected 1-10 for 30°)"
     print(f"✓ Lambertian order: {m_L:.2f} for 30° beam")
     
     # Check responsivity

@@ -209,13 +209,13 @@ class SupercapStorage:
         capacitance_f: Capacitance in Farads
         v_max: Maximum voltage (V)
         v_initial: Initial voltage (V), default 0
-        leakage_ua: Leakage current (µA), default 0
+        leakage_ua: Leakage current (µA), default 1.0 (typical for commercial supercaps)
     """
     
     def __init__(self, capacitance_f: float = 0.1,
                  v_max: float = 5.0,
                  v_initial: float = 0.0,
-                 leakage_ua: float = 0.0):
+                 leakage_ua: float = 1.0):
         self.capacitance_f = capacitance_f
         self.v_max = v_max
         self.leakage_ua = leakage_ua

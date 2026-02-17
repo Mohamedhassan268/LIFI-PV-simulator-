@@ -9,6 +9,7 @@ Author: Phase 3 Implementation
 """
 
 import numpy as np
+import warnings
 from typing import Dict, List, Tuple, Optional, Union
 
 
@@ -198,6 +199,13 @@ class AdaptiveOFDMModulator:
     """
     OFDM with Adaptive Bit Loading (Xu 2024).
     
+    .. deprecated::
+        This class is superseded by ``simulator/ofdm.py`` (full OFDM module
+        with Hermitian symmetry, DCO-OFDM, and proper clipping) and by
+        ``Transmitter.modulate_ofdm()`` (integrated TX chain).
+        Use those instead for new work. This class is retained for backward
+        compatibility only.
+    
     Maximizes throughput by adapting constellation size per subcarrier
     based on the estimated SNR.
     
@@ -223,6 +231,11 @@ class AdaptiveOFDMModulator:
         num_data_carriers: Optional[int] = None,
         clipping_ratio_db: Optional[float] = None
     ):
+        warnings.warn(
+            "AdaptiveOFDMModulator is deprecated. "
+            "Use simulator.ofdm.OFDMModulator or Transmitter.modulate_ofdm() instead.",
+            DeprecationWarning, stacklevel=2
+        )
         self.nfft = int(nfft)
         self.cp_length = int(cp_length)
         self.clipping_ratio_db = clipping_ratio_db

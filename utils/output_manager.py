@@ -326,6 +326,48 @@ def reset_paper_output(paper_name: str = None):
         del _paper_output_cache[paper_name]
 
 
+def cleanup_old_tests(paper_name: str, keep_last: int = 5, base_dir: str = 'outputs'):
+    """
+    Remove old test folders for a paper, keeping only the most recent N.
+    
+    Useful for preventing unbounded folder growth during development.
+    
+    Args:
+        paper_name: Paper identifier (e.g., 'correa_2025')
+        keep_last: Number of recent test folders to keep (default 5)
+        base_dir: Base output directory
+        
+    Returns:
+        list: Paths of deleted folders
+    """
+    import shutil
+    
+    paper_folder = Path(base_dir) / f"paper_{paper_name}"
+    if not paper_folder.exists():
+        return []
+    
+    # Find all testN folders, sorted by number
+    test_folders = []
+    for d in paper_folder.iterdir():
+        if d.is_dir() and d.name.startswith('test') and d.name[4:].isdigit():
+            test_folders.append((int(d.name[4:]), d))
+    
+    test_folders.sort(key=lambda x: x[0])
+    
+    # Delete all but the last N
+    deleted = []
+    if len(test_folders) > keep_last:
+        to_delete = test_folders[:-keep_last]
+        for num, folder in to_delete:
+            shutil.rmtree(folder)
+            deleted.append(str(folder))
+    
+    kept = len(test_folders) - len(deleted)
+    print(f"[Cleanup] {paper_name}: deleted {len(deleted)}, kept {kept}")
+    
+    return deleted
+
+
 # ========== TEST ==========
 
 if __name__ == "__main__":

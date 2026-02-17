@@ -345,61 +345,99 @@ def run_validation(output_dir=None):
 # =============================================================================
 
 def _plot_all(output_dir, R_loads, bws, R_v, voltages, td, levels, bers):
-    """Generate 6-panel validation figure."""
-    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
-    fig.suptitle("González-Uriarte 2024 — Low-Cost PV VLC Receiver Validation",
-                 fontsize=14, fontweight='bold')
+    R_sh = PARAMS['R_sh_kohm'] * 1e3
 
-    # 1. BW vs R_load (Fig. 2)
-    ax = axes[0, 0]
+    # Calibrate I_ph from 220 Ohm operating point
+    R_eq_220 = (R_sh * 220) / (R_sh + 220)
+    I_ph = PARAMS['fig3_V_pp_220_mV'] * 1e-3 / R_eq_220
+    V_oc_mV = PARAMS['fig3_V_pp_open_mV']  # 600 mV saturation
+
+    # ─── FIG 3 (SEPARATE): Vpp vs Load ────────────────────────────────
+    R_sweep = np.logspace(0.8, 7, 200)
+    V_out_mV = np.array([
+        min(I_ph * (R_sh * R) / (R_sh + R) * 1e3, V_oc_mV) for R in R_sweep
+    ])
+    paper_R =   [11.6, 100, 220, 356, 1e3, 2e3, 5.18e3, 10e3, 128e3, 1e6]
+    paper_Vpp = [1.0,  9,   20,  30,  80,  145, 330,    450,  590,   600]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(R_sweep, V_out_mV, '-', color='#4472C4', lw=2, label='Simulated')
+    ax.plot(paper_R, paper_Vpp, 'o-', color='#4472C4', ms=7, lw=1,
+            mfc='#4472C4', mec='#2F5496', label='Paper Data')
+    ax.set_xscale('log')
+    ax.set_xlabel('Load [\u03a9]', fontsize=11)
+    ax.set_ylabel('Vpp [mV]', fontsize=11)
+    ax.set_title('Vpp vs Load of PV Panel', fontsize=13, fontweight='bold')
+    ax.grid(True, alpha=0.3); ax.legend(fontsize=9)
+    ax.set_ylim([0, 650]); ax.set_xlim([8, 2e6])
+    ax.set_xticks([10, 100, 220, 1e3, 10e3, 1e5, 1e6])
+    ax.set_xticklabels(['10', '100', '220', '1.02k', '10k', '100k', '1M'], fontsize=9)
+    fig.text(0.5, -0.01,
+             'Fig. 3. Peak-to-peak voltage of the sinusoidal signal delivered by the PV\npanel for different loads.',
+             ha='center', fontsize=9, fontstyle='italic')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'fig3_vpp_vs_load.png'),
+                dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"    \u2713 fig3_vpp_vs_load.png")
+
+    # ─── FIG 7 (SEPARATE): TX vs RX Manchester waveforms ─────────────
+    fig7, (ax_rx, ax_tx) = plt.subplots(2, 1, figsize=(7, 5.5), sharex=True)
+    fig7.suptitle('Received and Transmitted signal', fontsize=13, fontweight='bold')
+    n_show = int(4.5e-3 * td['fs'])
+    t_ms = td['t'][:n_show] * 1e3
+
+    ax_rx.plot(t_ms, td['V_amp'][:n_show], color='#C00000', linewidth=1.0)
+    ax_rx.set_ylabel('Voltage [V]', fontsize=10)
+    ax_rx.set_title('Received Signal', fontsize=10)
+    ax_rx.set_ylim([-0.2, 3.6])
+    ax_rx.set_yticks([0.0, 0.1, 2.2, 3.3])
+    ax_rx.set_yticklabels(['0.0', '0.1', '2.2', '3.3'])
+    ax_rx.grid(True, alpha=0.3)
+
+    ax_tx.plot(t_ms, td['sig_tx'][:n_show] * 3.3, color='#4472C4', linewidth=1.0)
+    ax_tx.set_ylabel('Voltage [V]', fontsize=10)
+    ax_tx.set_xlabel('Time [ms]', fontsize=10)
+    ax_tx.set_title('Transmitted Signal', fontsize=10)
+    ax_tx.set_ylim([-0.2, 3.6])
+    ax_tx.set_yticks([0.0, 0.1, 2.2, 3.3])
+    ax_tx.set_yticklabels(['0.0', '0.1', '2.2', '3.3'])
+    ax_tx.grid(True, alpha=0.3)
+    fig7.text(0.5, -0.01,
+              f'Fig. 7. Received and transmitted signal with manchester encoding at {PARAMS["baud_rate"]/1000:.1f} kBd.',
+              ha='center', fontsize=9, fontstyle='italic')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'fig7_rx_tx_manchester.png'),
+                dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"    \u2713 fig7_rx_tx_manchester.png")
+
+    # ─── COMBINED PNG: BW + Amplifier/Slicer + BER (no notch) ────────
+    fig_c, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig_c.suptitle("Gonz\u00e1lez-Uriarte 2024 \u2014 Validation Results",
+                   fontsize=14, fontweight='bold')
+
+    ax = axes[0]
     ax.loglog(R_loads, bws, 'b-', lw=2, label='Simulated')
-    ax.loglog(PARAMS['fig2_loads_ohm'], PARAMS['fig2_bw_hz'], 'ro', ms=8, label='Paper')
-    ax.axhline(50e3, color='green', ls='--', alpha=0.5)
-    ax.axvline(220, color='orange', ls='--', alpha=0.5)
-    ax.set_xlabel('R_load (Ω)'); ax.set_ylabel('Bandwidth (Hz)')
-    ax.set_title('Fig. 2: BW vs R_load', fontweight='bold')
+    ax.loglog(PARAMS['fig2_loads_ohm'], PARAMS['fig2_bw_hz'], 'ro', ms=8,
+              mfc='white', mew=2, label='Paper Data')
+    ax.axhline(50e3, color='green', ls='--', alpha=0.5, label='Target BW')
+    ax.axvline(220, color='orange', ls='--', alpha=0.5, label='Operating R')
+    ax.set_xlabel('Load Resistance (\u03a9)')
+    ax.set_ylabel('Bandwidth (Hz)')
+    ax.set_title('Fig. 2: Bandwidth vs Load', fontweight='bold')
     ax.legend(fontsize=8); ax.grid(True, which='both', alpha=0.3)
 
-    # 2. Voltage vs R_load (Fig. 3)
-    ax = axes[0, 1]
-    ax.semilogx(R_v, voltages * 1e3, 'b-', lw=2)
-    ax.axvline(220, color='orange', ls='--', alpha=0.5, label='220 Ω')
-    ax.set_xlabel('R_load (Ω)'); ax.set_ylabel('V_out (mV)')
-    ax.set_title('Fig. 3: Voltage vs R_load', fontweight='bold')
-    ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
-
-    # 3. TX vs RX waveforms (Fig. 7)
-    ax = axes[0, 2]
-    n_show = 2000
-    t_ms = td['t'][:n_show] * 1e3
-    ax.plot(t_ms, td['sig_tx'][:n_show], 'b-', alpha=0.6, label='TX')
-    ax.plot(t_ms, td['V_amp'][:n_show] / PARAMS['amp_rail_v'], 'r-', alpha=0.6, label='RX (norm)')
-    ax.set_xlabel('Time (ms)'); ax.set_ylabel('Amplitude')
-    ax.set_title(f'Fig. 7: TX vs RX @ {PARAMS["baud_rate"]} Bd', fontweight='bold')
-    ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
-
-    # 4. Notch filter effect
-    ax = axes[1, 0]
-    n_show = 5000
-    t_ms = td['t'][:n_show] * 1e3
-    ax.plot(t_ms, td['V_noisy'][:n_show]*1e3, 'r-', alpha=0.5, label='Before notch')
-    ax.plot(t_ms, td['V_notch'][:n_show]*1e3, 'b-', alpha=0.7, label='After notch')
-    ax.set_xlabel('Time (ms)'); ax.set_ylabel('Voltage (mV)')
-    ax.set_title('100 Hz Notch Filter Effect', fontweight='bold')
-    ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
-
-    # 5. Amplifier output + slicer
-    ax = axes[1, 1]
-    n_show = 1000
-    t_ms = td['t'][:n_show] * 1e3
-    ax.plot(t_ms, td['V_amp'][:n_show], 'g-', lw=1.5, label='Amplified')
-    ax.axhline(PARAMS['slicer_threshold_v'], color='r', ls='--', label='Threshold')
+    ax = axes[1]
+    n_s = 1000
+    t_ms2 = td['t'][:n_s] * 1e3
+    ax.plot(t_ms2, td['V_amp'][:n_s], 'g-', lw=1.5, label='Amplified')
+    ax.axhline(PARAMS['slicer_threshold_v'], color='r', ls='--', lw=1.5, label='Threshold')
     ax.set_xlabel('Time (ms)'); ax.set_ylabel('Voltage (V)')
-    ax.set_title('Amplifier + Data Slicer', fontweight='bold')
+    ax.set_title('Amplifier Output + Slicer Threshold', fontweight='bold')
     ax.legend(fontsize=8); ax.grid(True, alpha=0.3)
 
-    # 6. BER vs interference
-    ax = axes[1, 2]
+    ax = axes[2]
     ax.semilogy(levels * 100, np.array(bers) + 1e-4, 'bo-', lw=2, ms=6)
     ax.set_xlabel('100 Hz Interference Level (%)')
     ax.set_ylabel('BER')
@@ -407,24 +445,10 @@ def _plot_all(output_dir, R_loads, bws, R_v, voltages, td, levels, bers):
     ax.grid(True, alpha=0.3); ax.set_ylim([1e-4, 1])
 
     plt.tight_layout()
-    path = os.path.join(output_dir, 'gonzalez_validation_6panel.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    ✅ {path}")
-
-    # Separate BW figure
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
-    ax2.loglog(R_loads, bws, 'b-', lw=2.5, label='Simulated: $f_c = 1/(2\\pi R_{eq} C_j)$')
-    ax2.loglog(PARAMS['fig2_loads_ohm'], PARAMS['fig2_bw_hz'], 'ro', ms=10,
-               mfc='white', mew=2, label='Paper measurements')
-    ax2.axhline(50e3, color='green', ls='--', alpha=0.6, label='50 kHz target')
-    ax2.axvline(220, color='orange', ls='--', alpha=0.6, label='220 Ω operating point')
-    ax2.set_xlabel('Load Resistance R_load (Ω)', fontsize=12)
-    ax2.set_ylabel('3-dB Bandwidth (Hz)', fontsize=12)
-    ax2.set_title('González 2024 — Fig. 2: Bandwidth vs Load Resistance', fontweight='bold')
-    ax2.legend(fontsize=10); ax2.grid(True, which='both', alpha=0.3)
-    path2 = os.path.join(output_dir, 'fig2_bandwidth_vs_rload.png')
-    plt.savefig(path2, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    ✅ {path2}")
+    plt.savefig(os.path.join(output_dir, 'gonzalez_validation_combined.png'),
+                dpi=200, bbox_inches='tight')
+    plt.close()
+    print(f"    \u2713 gonzalez_validation_combined.png")
 
 
 if __name__ == "__main__":

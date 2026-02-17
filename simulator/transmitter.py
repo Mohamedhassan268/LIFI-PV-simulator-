@@ -17,6 +17,84 @@ from utils.constants import (
 )
 
 
+# =============================================================================
+# STANDALONE MANCHESTER CODEC (usable without Transmitter instance)
+# =============================================================================
+# Used by: González 2024, Kadirvelu 2021, any paper with Manchester encoding.
+# IEEE 802.3 convention:
+#   bit '1' → high-to-low transition (1, 0)
+#   bit '0' → low-to-high transition (0, 1)
+
+def manchester_encode(bits):
+    """
+    Manchester-encode a bit sequence (IEEE 802.3 convention).
+    
+    Each input bit becomes two output symbols:
+        bit 1 → [1, 0]  (high-to-low transition at mid-bit)
+        bit 0 → [0, 1]  (low-to-high transition at mid-bit)
+    
+    Output length = 2 × input length.
+    
+    Args:
+        bits (array-like): Binary bit sequence [0, 1, 0, 1, ...]
+        
+    Returns:
+        ndarray: Manchester-encoded symbol sequence (dtype int)
+    """
+    bits = np.asarray(bits, dtype=int)
+    symbols = np.empty(2 * len(bits), dtype=int)
+    symbols[0::2] = bits        # First half of each bit period
+    symbols[1::2] = 1 - bits    # Second half (complement)
+    return symbols
+
+
+def manchester_decode(symbols):
+    """
+    Decode a Manchester-encoded symbol sequence back to bits.
+    
+    Decoding rule (energy comparison):
+        Compare first half vs second half of each bit period.
+        If first > second → bit 1
+        If first < second → bit 0
+    
+    Handles both hard symbols (0/1) and soft analog samples.
+    
+    Args:
+        symbols (array-like): Manchester symbols or analog samples.
+            Length must be even.
+            
+    Returns:
+        ndarray: Decoded bits (dtype int)
+    """
+    symbols = np.asarray(symbols, dtype=float)
+    n_bits = len(symbols) // 2
+    
+    first_half = symbols[0::2][:n_bits]
+    second_half = symbols[1::2][:n_bits]
+    
+    # Decision: first > second → 1, else → 0
+    bits = (first_half > second_half).astype(int)
+    return bits
+
+
+def manchester_encode_signal(bits, samples_per_bit):
+    """
+    Generate a time-domain Manchester-encoded waveform (0/1 levels).
+    
+    Useful for creating baseband signals for direct modulation.
+    
+    Args:
+        bits (array-like): Binary bit sequence
+        samples_per_bit (int): Samples per original bit period
+        
+    Returns:
+        ndarray: Time-domain waveform (float, 0.0 or 1.0)
+    """
+    symbols = manchester_encode(bits)
+    samples_per_symbol = samples_per_bit // 2
+    return np.repeat(symbols.astype(float), samples_per_symbol)
+
+
 class Transmitter:
     """
     Optical transmitter with OOK modulation.
@@ -496,7 +574,7 @@ class Transmitter:
 # ========== TESTS ==========
 
 def test_transmitter():
-    """Unit test for transmitter."""
+    """Unit test for transmitter — validates OOK, Manchester codec, PWM-ASK."""
     
     print("\n" + "="*60)
     print("TRANSMITTER UNIT TEST")
@@ -508,32 +586,65 @@ def test_transmitter():
     # Generate test bit sequence
     bits = np.array([1, 0, 1, 1, 0])
     sps = 100  # samples per bit
-    fs = 1e6  # 1 MHz sample rate
+    fs = 1e6   # 1 MHz sample rate
     t = np.arange(len(bits) * sps) / fs
     
-    # Modulate
+    # --- Test 1: OOK modulation ---
+    print("\n[Test 1] OOK modulation...")
     P_tx = tx.modulate(bits, t)
-    
-    # Print stats
     stats = tx.get_power_stats(bits)
-    print(f"\nTransmitter Output:")
-    print(f"  P_tx (bit=1): {stats['P_tx_bit1_mw']:.2f} mW")
-    print(f"  P_tx (bit=0): {stats['P_tx_bit0_mw']:.2f} mW")
-    print(f"  P_tx (mean):  {stats['P_tx_mean_mw']:.2f} mW")
-    print(f"  P_tx (swing): {stats['P_tx_swing_mw']:.2f} mW")
+    print(f"  P_tx swing: {stats['P_tx_swing_mw']:.2f} mW")
+    assert P_tx.min() >= 0, "[ERROR] Negative power!"
+    assert P_tx.max() > 0, "[ERROR] Zero power!"
+    assert len(P_tx) == len(t), "[ERROR] Length mismatch!"
+    print("  [OK]")
     
-    print(f"\nWaveform:")
-    print(f"  Length: {len(P_tx)} samples")
-    print(f"  Min: {P_tx.min()*1e3:.3f} mW")
-    print(f"  Max: {P_tx.max()*1e3:.3f} mW")
-    print(f"  Mean: {P_tx.mean()*1e3:.3f} mW")
+    # --- Test 2: Standalone Manchester encode/decode ---
+    print("\n[Test 2] Standalone Manchester codec...")
+    test_bits = np.array([1, 0, 1, 1, 0, 0, 1, 0])
     
-    # Validation checks
-    assert P_tx.min() >= 0, "[ERROR] Negative power detected!"
-    assert P_tx.max() > 0, "[ERROR] All power zero!"
-    assert len(P_tx) == len(t), "[ERROR] Output length mismatch!"
+    # Encode
+    symbols = manchester_encode(test_bits)
+    assert len(symbols) == 2 * len(test_bits), "[ERROR] Encoded length wrong"
+    # bit 1 → [1,0], bit 0 → [0,1]
+    assert symbols[0] == 1 and symbols[1] == 0, "[ERROR] Bit 1 encoding wrong"
+    assert symbols[2] == 0 and symbols[3] == 1, "[ERROR] Bit 0 encoding wrong"
+    print(f"  Encoded {len(test_bits)} bits → {len(symbols)} symbols")
     
-    print("\n[OK] All transmitter tests passed!")
+    # Decode
+    decoded = manchester_decode(symbols)
+    assert np.array_equal(decoded, test_bits), \
+        f"[ERROR] Decode mismatch: {decoded} != {test_bits}"
+    print(f"  Decoded back: {decoded} == {test_bits}")
+    print("  [OK] Perfect round-trip")
+    
+    # Decode with noisy analog samples
+    noisy_symbols = symbols.astype(float) + np.random.normal(0, 0.2, len(symbols))
+    decoded_noisy = manchester_decode(noisy_symbols)
+    errors = np.sum(decoded_noisy != test_bits)
+    print(f"  Noisy decode (σ=0.2): {errors}/{len(test_bits)} errors")
+    print("  [OK]")
+    
+    # --- Test 3: Manchester signal generation ---
+    print("\n[Test 3] Manchester waveform generation...")
+    waveform = manchester_encode_signal(test_bits, samples_per_bit=100)
+    assert len(waveform) == len(test_bits) * 100, \
+        f"[ERROR] Waveform length {len(waveform)} != {len(test_bits)*100}"
+    assert set(np.unique(waveform)) <= {0.0, 1.0}, "[ERROR] Non-binary values"
+    print(f"  Waveform: {len(waveform)} samples for {len(test_bits)} bits")
+    print("  [OK]")
+    
+    # --- Test 4: Transmitter Manchester modulate ---
+    print("\n[Test 4] Transmitter.modulate(encoding='manchester')...")
+    P_manch = tx.modulate(bits, t, encoding='manchester')
+    assert len(P_manch) == len(t), "[ERROR] Length mismatch"
+    assert P_manch.min() >= 0, "[ERROR] Negative power"
+    # Manchester should have transitions within each bit period
+    print(f"  P range: {P_manch.min()*1e3:.3f} - {P_manch.max()*1e3:.3f} mW")
+    print("  [OK]")
+    
+    print("\n" + "="*60)
+    print("[OK] ALL TRANSMITTER TESTS PASSED!")
     print("="*60)
     
     return P_tx

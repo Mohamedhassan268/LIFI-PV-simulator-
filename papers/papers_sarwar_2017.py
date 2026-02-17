@@ -28,11 +28,15 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import the unified OFDM module
-# In project: from simulator.ofdm import OFDMModem, solar_panel_channel_response
-# For now, import from local copy:
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from simulator_ofdm import OFDMModem, solar_panel_channel_response, ber_mqam
+# Import the unified OFDM module from the project
+try:
+    from simulator.simulator_ofdm import OFDMModem, solar_panel_channel_response, ber_mqam
+except ModuleNotFoundError:
+    # If running from papers/ folder, add project root to path
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from simulator.simulator_ofdm import OFDMModem, solar_panel_channel_response, ber_mqam
 
 # =============================================================================
 # PAPER PARAMETERS (LOCKED)

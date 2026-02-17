@@ -27,10 +27,23 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from simulator_ofdm import (
-    OFDMModem, allocate_bits, ber_mqam,
-    gross_data_rate, net_data_rate, BIT_ALLOCATION_TABLE,
-)
+
+# Import from the project's OFDM module
+# Works whether run from project root or papers/ folder
+try:
+    from simulator.simulator_ofdm import (
+        OFDMModem, allocate_bits, ber_mqam,
+        gross_data_rate, net_data_rate, BIT_ALLOCATION_TABLE,
+    )
+except ModuleNotFoundError:
+    # If running from papers/ folder, add project root to path
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    from simulator.simulator_ofdm import (
+        OFDMModem, allocate_bits, ber_mqam,
+        gross_data_rate, net_data_rate, BIT_ALLOCATION_TABLE,
+    )
 
 # =============================================================================
 # PAPER PARAMETERS (LOCKED)
